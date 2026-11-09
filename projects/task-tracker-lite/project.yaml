@@ -37,6 +37,13 @@ planning:
     mergeCommit: null
     approvedAt: null
     approvedBy: null
+implementation:
+  status: none
+  pullRequest: null
+  baseline:
+    mergeCommit: null
+    approvedAt: null
+    approvedBy: null
 authorization:
   allowedSlackUserIds:
     - U0CFRUV378D
