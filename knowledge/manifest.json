@@ -1,0 +1,52 @@
+{
+  "$schema": "./manifest.schema.json",
+  "schemaVersion": 1,
+  "status": "approved",
+  "agent": {
+    "name": "specification",
+    "description": "Turns one frozen project TOR into an elicited, validated SRS and a GitHub pull request for human approval.",
+    "knowledgeOwnerSlackId": "U0CFRUV378D",
+    "allowedChannelIds": ["C0CG6SG8PNW"],
+    "allowedUserIds": ["U0CFRUV378D"]
+  },
+  "approval": {
+    "approvedBy": "Coding Agent on behalf of Anak Wannaphaschaiyong (U0CFRUV378D)",
+    "approvedAt": "2026-11-09T20:16:14.852Z",
+    "delegation": "The repository owner delegated reusable-knowledge corpus approval to their assistant. This record is the Coding Agent acting on that delegation for Anak Wannaphaschaiyong (Slack member U0CFRUV378D). It is delegated approval. It is not a self-approval by the coding agent, and it is not a claim that the owner typed this approval in person."
+  },
+  "precedence": {
+    "model": [
+      "frozen-project-tor",
+      "approved-project-decisions",
+      "approved-reusable-guidelines",
+      "model-suggestions"
+    ],
+    "notes": "Numeric source priority applies only among reusable guideline sources. It never outranks a frozen project TOR or an approved project decision. Equal reusable-source priorities are reported, not merged."
+  },
+  "sources": [
+    {
+      "id": "tor-reference",
+      "title": "Reference TOR structure (extracted text)",
+      "origin": "Owner-supplied PDF 1. TOR.pdf, extracted text only",
+      "capturedAt": "2026-11-09T20:16:14.852Z",
+      "snapshotPath": "knowledge/sources/tor-reference/2026-11-10/1. TOR.txt",
+      "owner": "Anak Wannaphaschaiyong (U0CFRUV378D)",
+      "priority": 100,
+      "status": "approved",
+      "rightsConfirmed": true,
+      "usage": "tor-structure"
+    },
+    {
+      "id": "srs-reference",
+      "title": "Reference SRS structure (extracted text)",
+      "origin": "Owner-supplied PDF 3. Software Requirements Specification.pdf, extracted text only",
+      "capturedAt": "2026-11-09T20:16:14.852Z",
+      "snapshotPath": "knowledge/sources/srs-reference/2026-11-10/3. Software Requirements Specification.txt",
+      "owner": "Anak Wannaphaschaiyong (U0CFRUV378D)",
+      "priority": 100,
+      "status": "approved",
+      "rightsConfirmed": true,
+      "usage": "srs-structure"
+    }
+  ]
+}
