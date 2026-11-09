@@ -2,7 +2,7 @@
   "name": "wewebplus-software-factory",
   "version": "0.1.0",
   "private": true,
-  "description": "Software Factory Prototype 1: Eve Specification Agent that turns a frozen TOR into a human-approved SRS.",
+  "description": "Software Factory Prototypes 1-6. Eve agents from a frozen TOR through release verification. They do not deploy the sample application.",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
