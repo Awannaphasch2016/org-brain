@@ -5,7 +5,10 @@ tor:
   path: docs/tor.md
   baselineId: TOR-001
   status: frozen
-  gitCommit: null
+  # Verbatim TOR bytes were written by 33df89b (PR #1), not by merge a69caf3.
+  # git log on docs/tor.md names 33df89b. Both commits store the same blob,
+  # and that blob's sha256 is tor.sha256, so the baseline is verifiable at either.
+  gitCommit: 33df89bb531e635f8fea2f751d9559c15c3a4065
   sha256: beb37f537522d1a1b1407e0928158556b639e476a8cc4805ef7bb348d5ff1be5
 srs:
   path: docs/srs.md
