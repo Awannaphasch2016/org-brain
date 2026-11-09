@@ -51,6 +51,19 @@ export function createSrsPullRequest(
   },
 ): Promise<{ url: string; number: number; branch: string; headSha: string }>;
 
+export function openReviewedPullRequest(
+  client: GithubClient,
+  input: {
+    projectId: string;
+    baseBranch: string;
+    branch: string;
+    title: string;
+    body: string;
+    messagePrefix?: string;
+    files: readonly { path: string; content: string; sha?: string }[];
+  },
+): Promise<{ url: string; number: number; branch: string; headSha: string }>;
+
 export function getPullRequestStatus(
   client: GithubClient,
   pullNumber: number,

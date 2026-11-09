@@ -16,3 +16,5 @@ export const specificationConfig: SpecificationAgentConfig = {
     "U0CFRUV378D"
   ]
 };
+
+export const factoryConfig = specificationConfig;

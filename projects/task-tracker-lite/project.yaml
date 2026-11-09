@@ -19,6 +19,16 @@ srs:
     mergeCommit: null
     approvedAt: null
     approvedBy: null
+architecture:
+  path: docs/architecture.md
+  status: none
+  pullRequest: null
+  branch: null
+  baseline:
+    mergeCommit: null
+    approvedAt: null
+    approvedBy: null
+    sourceSrsCommit: null
 authorization:
   allowedSlackUserIds:
     - U0CFRUV378D
