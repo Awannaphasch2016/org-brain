@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import {
   displayPath,
@@ -20,19 +20,33 @@ for (const source of activeSources) {
   files.push(resolve(dirname(snapshot), "provenance.json"));
 }
 
-await rm(sandboxKnowledgeRoot, { force: true, recursive: true });
-await mkdir(sandboxKnowledgeRoot, { recursive: true });
+const agentRoots = [];
+for (const name of await readdir(resolve(repoRoot, "agents"))) {
+  const marker = resolve(repoRoot, "agents", name, "agent/sandbox/sandbox.ts");
+  try {
+    if ((await stat(marker)).isFile()) {
+      agentRoots.push(resolve(repoRoot, "agents", name, "agent/sandbox/workspace/knowledge"));
+    }
+  } catch {
+    // Reserved names such as a future factory agent have no sandbox yet.
+  }
+}
+if (agentRoots.length === 0) agentRoots.push(sandboxKnowledgeRoot);
 
 let preparedFileCount = 0;
-for (const source of files) {
-  const destinationPath = relative(knowledgeRoot, source);
-  if (destinationPath.startsWith("..") || destinationPath.includes("projects/")) {
-    throw new Error(`Refusing to package ${displayPath(source)} into the sandbox.`);
+for (const outputRoot of agentRoots) {
+  await rm(outputRoot, { force: true, recursive: true });
+  await mkdir(outputRoot, { recursive: true });
+  for (const source of files) {
+    const destinationPath = relative(knowledgeRoot, source);
+    if (destinationPath.startsWith("..") || destinationPath.includes("projects/") || destinationPath.includes("fixtures/")) {
+      throw new Error(`Refusing to package ${displayPath(source)} into the sandbox.`);
+    }
+    const destination = resolve(outputRoot, destinationPath);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(source, destination);
+    preparedFileCount += 1;
   }
-  const destination = resolve(sandboxKnowledgeRoot, destinationPath);
-  await mkdir(dirname(destination), { recursive: true });
-  await copyFile(source, destination);
-  preparedFileCount += 1;
 }
 
 const runtimeManifest = {
@@ -51,11 +65,13 @@ const runtimeManifest = {
   })),
 };
 
-await writeFile(
-  resolve(sandboxKnowledgeRoot, "manifest.json"),
-  `${JSON.stringify(runtimeManifest, null, 2)}\n`,
-);
-preparedFileCount += 1;
+for (const outputRoot of agentRoots) {
+  await writeFile(
+    resolve(outputRoot, "manifest.json"),
+    `${JSON.stringify(runtimeManifest, null, 2)}\n`,
+  );
+  preparedFileCount += 1;
+}
 
 await mkdir(generatedRoot, { recursive: true });
 await writeFile(
@@ -78,9 +94,11 @@ export const specificationConfig: SpecificationAgentConfig = ${JSON.stringify(
     null,
     2,
   )};
+
+export const factoryConfig = specificationConfig;
 `,
 );
 
 console.log(
-  `Prepared ${preparedFileCount} knowledge files for the specification agent. Project directories were not packaged.`,
+  `Prepared ${preparedFileCount} knowledge files for ${agentRoots.length} agent sandbox${agentRoots.length === 1 ? "" : "es"}. Project directories and fixtures were not packaged.`,
 );
