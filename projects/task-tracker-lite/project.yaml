@@ -6,7 +6,7 @@ tor:
   baselineId: TOR-001
   status: frozen
   gitCommit: null
-  sha256: f2563e1890953e59dbf47e873f52f8d1f1101fff1425afe4107d0328cd0ea8aa
+  sha256: beb37f537522d1a1b1407e0928158556b639e476a8cc4805ef7bb348d5ff1be5
 srs:
   path: docs/srs.md
   status: none

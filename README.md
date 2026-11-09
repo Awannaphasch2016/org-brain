@@ -49,7 +49,7 @@ The reusable corpus is approved. `knowledge/manifest.json` records `approvedBy` 
 
 ## Sample project
 
-`projects/task-tracker-lite/docs/tor.md` is frozen baseline TOR-001. `project.yaml` stores its SHA-256. The attached plan requires that text verbatim from brief section 11, and that section was not in the plan or the other source documents. This file follows the plan's TOR skeleton and the facts the plan states the sample contains: baseline TOR-001, external customer access out of scope, implementation deferred, and no decision on permissions, statuses, cross-user edits, reassignment, or persistence acceptance.
+`projects/task-tracker-lite/docs/tor.md` is frozen baseline TOR-001, copied verbatim from the owner's brief. `project.yaml` stores its SHA-256.
 
 ## Still outside this change
 
