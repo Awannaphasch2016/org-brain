@@ -29,6 +29,14 @@ architecture:
     approvedAt: null
     approvedBy: null
     sourceSrsCommit: null
+planning:
+  path: docs/feature-issues.md
+  status: none
+  pullRequest: null
+  baseline:
+    mergeCommit: null
+    approvedAt: null
+    approvedBy: null
 authorization:
   allowedSlackUserIds:
     - U0CFRUV378D
