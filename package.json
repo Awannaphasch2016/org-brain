@@ -1,0 +1,45 @@
+{
+  "name": "wewebplus-software-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Software Factory Prototype 1: Eve Specification Agent that turns a frozen TOR into a human-approved SRS.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Awannaphasch2016/wewebplus-software-factory.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "build": "pnpm prepare:knowledge && eve build --skip-sandbox-prewarm",
+    "build:release": "pnpm prepare:knowledge && eve build",
+    "check": "pnpm verify:knowledge && pnpm test && pnpm typecheck && pnpm build",
+    "dev": "pnpm prepare:knowledge && eve dev",
+    "info": "pnpm prepare:knowledge && eve info --agent specification",
+    "prepare:knowledge": "node scripts/prepare-knowledge.mjs",
+    "start": "eve start",
+    "test": "node --test --test-reporter spec tests/*.test.mjs scripts/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify:knowledge": "node scripts/verify-knowledge.mjs",
+    "verify:source-immutability": "node scripts/verify-source-immutability.mjs"
+  },
+  "dependencies": {
+    "@vercel/connect": "2.9.1",
+    "@vercel/sandbox": "3.9.1",
+    "ai": "7.0.166",
+    "eve": "1.0.0-rc.7",
+    "jiti": "2.7.0",
+    "zod": "4.6.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2",
+    "vercel": "65.14.0"
+  }
+}

@@ -1,0 +1,22 @@
+id: task-tracker-lite
+title: Task Tracker Lite
+status: active
+tor:
+  path: docs/tor.md
+  baselineId: TOR-001
+  status: frozen
+  gitCommit: null
+  sha256: beb37f537522d1a1b1407e0928158556b639e476a8cc4805ef7bb348d5ff1be5
+srs:
+  path: docs/srs.md
+  status: none
+  pullRequest: null
+  branch: null
+  baseline:
+    mergeCommit: null
+    approvedAt: null
+    approvedBy: null
+authorization:
+  allowedSlackUserIds:
+    - U0CFRUV378D
+  reviewerGithubLogins: []
