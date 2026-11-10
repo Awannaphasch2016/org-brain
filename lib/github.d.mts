@@ -34,7 +34,7 @@ export class GithubClient {
   request(
     method: string,
     apiPath: string,
-    init?: { body?: unknown },
+    init?: { body?: unknown; allowNotFound?: boolean },
   ): Promise<any>;
 }
 
