@@ -2,7 +2,7 @@
 
 Prototype 1 of the Software Factory: one Eve Specification Agent. It turns a frozen Terms of Reference into an elicited, validated Software Requirements Specification and opens a GitHub pull request for a person to review. The agent does not merge.
 
-The workspace layout is `agents/specification/` so a later Factory Agent can be added beside it. There is no root `agent/` directory.
+The workspace layout is one Eve agent per stage under `agents/`. `agents/factory/` is reserved and is not implemented. Routes and stage notes are in `docs/prototypes/README.md`.
 
 ## Slack
 

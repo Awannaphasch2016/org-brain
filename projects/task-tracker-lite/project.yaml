@@ -44,6 +44,15 @@ implementation:
     mergeCommit: null
     approvedAt: null
     approvedBy: null
+release:
+  path: docs/release-verification.md
+  status: none
+  pullRequest: null
+  deployed: false
+  baseline:
+    mergeCommit: null
+    approvedAt: null
+    approvedBy: null
 authorization:
   allowedSlackUserIds:
     - U0CFRUV378D
