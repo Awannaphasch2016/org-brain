@@ -12,13 +12,13 @@ tor:
   sha256: beb37f537522d1a1b1407e0928158556b639e476a8cc4805ef7bb348d5ff1be5
 srs:
   path: docs/srs.md
-  status: none
-  pullRequest: null
+  status: approved
+  pullRequest: 9
   branch: null
   baseline:
-    mergeCommit: null
-    approvedAt: null
-    approvedBy: null
+    mergeCommit: 6f9ff4732c1f31853bcffb7ce1b5b2c7ccd8005b
+    approvedAt: "2026-11-11T06:22:46.152Z"
+    approvedBy: "slack:T0CFZ4ZT20Z:U0CFRUV378D"
 architecture:
   path: docs/architecture.md
   status: none
