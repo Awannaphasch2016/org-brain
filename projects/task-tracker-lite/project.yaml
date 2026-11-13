@@ -21,13 +21,13 @@ srs:
     approvedBy: "slack:T0CFZ4ZT20Z:U0CFRUV378D"
 architecture:
   path: docs/architecture.md
-  status: none
-  pullRequest: null
+  status: approved
+  pullRequest: 11
   branch: null
   baseline:
-    mergeCommit: null
+    mergeCommit: bfac97b0c5cfcaa42b76077f7d275c5e7b337f21
     approvedAt: null
-    approvedBy: null
+    approvedBy: "slack:T0CFZ4ZT20Z:U0CFRUV378D"
     sourceSrsCommit: null
 planning:
   path: docs/feature-issues.md
