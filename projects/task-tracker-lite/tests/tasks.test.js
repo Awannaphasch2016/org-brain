@@ -117,5 +117,5 @@ test('unknown callers are refused', (t) => {
 
 test('the service has no delete operation', (t) => {
   const { tasks } = setup(t);
-  assert.deepEqual(Object.keys(tasks).sort(), ['create', 'edit', 'list', 'setStatus', 'view']);
+  assert.deepEqual(Object.keys(tasks).sort(), ['create', 'edit', 'list', 'setAssignee', 'setStatus', 'view']);
 });
