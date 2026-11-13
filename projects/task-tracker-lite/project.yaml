@@ -38,12 +38,12 @@ planning:
     approvedAt: null
     approvedBy: "slack:T0CFZ4ZT20Z:U0CFRUV378D"
 implementation:
-  status: none
-  pullRequest: null
+  status: approved
+  pullRequest: 26
   baseline:
-    mergeCommit: null
+    mergeCommit: 2e07ef2e048c327a8f65bdbb96e0a637588b7544
     approvedAt: null
-    approvedBy: null
+    approvedBy: "Anak Wannaphaschaiyong"
 release:
   path: docs/release-verification.md
   status: none
