@@ -243,3 +243,39 @@ Source: C-003. Depends on ISS-005. ISS-005 was merged in PR #34 (merge `f75173a0
 ### Notes for review
 
 - Keeping the current description when `description` is left out is my own choice. The issue does not say what happens in that case. ISS-011's edit form will always send both fields.
+
+## ISS-007 — Task service: change status
+
+Source: C-003. Depends on ISS-005. ISS-006 was merged in PR #36 (merge `04345ccc9abb6c9a0fc966372f390cdf24630d32`), and its baseline record is PR #37.
+
+### Design
+
+- `src/store.js` gains `updateTaskStatus(id, status)`. It rewrites only `status` and returns the updated row, or `null` for an unknown id. It refuses any value other than `To Do`, `In Progress`, or `Done`, and the schema `CHECK` constraint also still applies.
+- `src/tasks.js` gains `setStatus(memberId, taskId, status)`.
+  - The caller must be a known member, and the task must be in the caller's team. Otherwise `setStatus` returns `null`.
+  - The value must exactly match one of `To Do`, `In Progress`, or `Done`, including case and spacing. Any other value throws `TaskValidationError` before anything is written, so the task stays unchanged.
+  - Any member may change any task's status. There is no role or ownership check (FR-012).
+  - It returns the updated task in the `view` form.
+- Any status can move to either of the other two, so there is no workflow order to enforce.
+
+### Changes to earlier tests
+
+- `tests/store.test.js`: `updateTaskStatus` was added to the exact list of store operations. The check that nothing can delete is unchanged.
+- `tests/tasks.test.js`: the list of service operations now includes `setStatus`.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| Status can move from each of `To Do`, `In Progress`, and `Done` to either of the other two, and the change is persisted | `status moves from each value to either of the other two, and each change is persisted`: all six transitions are made by a member who did not create the task, and each is read back through a separate store connection. Title, description, and assignee are checked to be unchanged |
+| Any other status value is rejected and leaves the task unchanged | `any other status value is rejected and leaves the task unchanged`: unknown words, wrong case, extra spaces, an empty value, null, and non-text values |
+| (Safety) The store refuses unknown statuses on its own | `the store also refuses an unknown status` |
+| (Safety) Missing tasks and unknown callers | `missing tasks return null and unknown callers are refused` |
+
+### Test run
+
+`node --test`: 39 tests, 39 pass, 0 fail.
+
+### Notes for review
+
+- Setting a task to the status it already has is allowed and changes nothing. The issue does not cover this case.

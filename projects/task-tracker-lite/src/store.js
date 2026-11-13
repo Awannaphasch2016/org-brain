@@ -75,6 +75,7 @@ function openStore(filePath) {
       'SELECT id, team_id, title, description, status, assignee_id FROM tasks WHERE team_id = ? ORDER BY id'
     ),
     updateTaskText: db.prepare('UPDATE tasks SET title = ?, description = ? WHERE id = ?'),
+    updateTaskStatus: db.prepare('UPDATE tasks SET status = ? WHERE id = ?'),
   };
 
   return Object.freeze({
@@ -135,6 +136,15 @@ function openStore(filePath) {
         throw new TypeError('description must be a string');
       }
       const { changes } = stmt.updateTaskText.run(title, description, id);
+      return changes === 0 ? null : plain(stmt.getTask.get(id));
+    },
+    // ISS-007: change a task's status. Returns the updated task, or null when no task has
+    // that id.
+    updateTaskStatus(id, status) {
+      if (!TASK_STATUSES.includes(status)) {
+        throw new TypeError(`status must be one of: ${TASK_STATUSES.join(', ')}`);
+      }
+      const { changes } = stmt.updateTaskStatus.run(status, id);
       return changes === 0 ? null : plain(stmt.getTask.get(id));
     },
 
