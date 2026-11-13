@@ -44,7 +44,7 @@ The store has no delete operation for tasks (FR-016), and it has no delete opera
 
 ### Assumptions to confirm in review
 
-- Team has a `name` column. The issue says only "a Team". The TOR, SRS, and architecture were not available in the implementation workspace, so this field could not be checked against SRS 2.3.
+- Team has a `name` column. The issue says only "a Team". The TOR, SRS, and architecture were not available in the implementation workspace, so this field could not be checked against SRS 2.3. The approver chose to keep it in the Slack thread.
 - `description` is stored as an empty string when it is not provided, not as NULL.
 - Password hashing is not part of this issue. The store saves the hash string it is given. Salted hashing is part of ISS-002.
 
@@ -96,3 +96,32 @@ node src/add-member.js --db <path> --username <name> --display-name <name> [--te
 
 - There is no web server yet, so FR-013 is enforced by the guard test. ISS-004, ISS-009, and later issues must keep that test passing.
 - The command does not enforce any password length or complexity, because the issue does not ask for it. It rejects only an empty password.
+
+## ISS-003 — Team and member directory
+
+Source: C-004. Depends on ISS-001. ISS-002 was merged in PR #28 (merge `456a39fdb1ef7a798576b14bb0f8ab4a9d164d54`), and its baseline record is PR #29.
+
+### Design
+
+- `src/directory.js`: `createDirectory(store)` returns a frozen object with exactly one operation, `forMember(memberId)`.
+- `forMember` returns `{ team: { id, name }, members: [{ id, username, display_name }, …] }` for the member's team. `members` lists every member of that team, ordered by id. This list is the assignable set for FR-005, and ISS-008 will use it.
+- `forMember` returns `null` when the id is not a known member or is not an integer.
+- `password_hash` is never included in the result.
+- The result and its nested objects are frozen. The module calls only the store's read methods.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| Given a signed-in member id, the directory returns that member's team and the full list of that team's members | `returns the signed-in member's team and every member of that team` |
+| The directory exposes no write operation | `the directory exposes no write operation`: one operation only, frozen results, and the source makes no create calls and contains no SQL writes |
+| (Safety) The directory does not expose credentials | `never exposes password hashes` |
+| (Safety) Unknown ids are handled | `unknown or invalid member ids return null` |
+
+### Test run
+
+`node --test`: 19 tests, 19 pass, 0 fail.
+
+### Housekeeping
+
+- PR #28 accidentally dropped one sentence from the ISS-001 assumptions in this report. This PR restores it: "The approver chose to keep it in the Slack thread."
