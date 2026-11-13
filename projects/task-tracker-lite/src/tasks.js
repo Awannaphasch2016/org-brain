@@ -4,15 +4,19 @@
 // FR-001, FR-002, FR-005, FR-008, FR-009, FR-012.
 // ISS-006: Edit title and description (FR-007, FR-012).
 // ISS-007: Change status (FR-003, FR-004, FR-012).
+// ISS-008: Set or clear the assignee (FR-005, FR-006, FR-012, FR-014).
 // The caller is identified by the session's member id. Any member may perform every
 // operation on any task in their team. There are no roles and no per-task checks.
 
 const { TASK_STATUSES } = require('./store');
+const { createDirectory } = require('./directory');
 
 class TaskValidationError extends Error {}
 class UnknownMemberError extends Error {}
 
 function createTaskService(store) {
+  const directory = createDirectory(store);
+
   function teamOf(memberId) {
     const member = Number.isInteger(memberId) ? store.getMember(memberId) : null;
     if (member === null) throw new UnknownMemberError('unknown member');
@@ -96,6 +100,24 @@ function createTaskService(store) {
         throw new TaskValidationError(`status must be one of: ${TASK_STATUSES.join(', ')}`);
       }
       store.updateTaskStatus(taskId, status);
+      return view(memberId, taskId);
+    },
+
+    // Sets the task's single assignee to a member of the caller's team (which is the
+    // task's team), or clears it when assigneeId is null. Returns the updated task in
+    // the view form, or null when the task is not in the caller's team. Any id that is
+    // not a member of that team is rejected and leaves the task unchanged.
+    setAssignee(memberId, taskId, assigneeId) {
+      const current = view(memberId, taskId);
+      if (current === null) return null;
+      if (assigneeId !== null) {
+        const team = directory.forMember(memberId);
+        const assignable = Number.isInteger(assigneeId) && team.members.some((m) => m.id === assigneeId);
+        if (!assignable) {
+          throw new TaskValidationError('assignee must be a member of the team, or null for unassigned');
+        }
+      }
+      store.updateTaskAssignee(taskId, assigneeId);
       return view(memberId, taskId);
     },
   });

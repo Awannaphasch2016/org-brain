@@ -76,6 +76,7 @@ function openStore(filePath) {
     ),
     updateTaskText: db.prepare('UPDATE tasks SET title = ?, description = ? WHERE id = ?'),
     updateTaskStatus: db.prepare('UPDATE tasks SET status = ? WHERE id = ?'),
+    updateTaskAssignee: db.prepare('UPDATE tasks SET assignee_id = ? WHERE id = ?'),
   };
 
   return Object.freeze({
@@ -145,6 +146,15 @@ function openStore(filePath) {
         throw new TypeError(`status must be one of: ${TASK_STATUSES.join(', ')}`);
       }
       const { changes } = stmt.updateTaskStatus.run(status, id);
+      return changes === 0 ? null : plain(stmt.getTask.get(id));
+    },
+    // ISS-008: set a task's single assignee (a member id) or clear it (null). Returns the
+    // updated task, or null when no task has that id. Foreign keys reject unknown members.
+    updateTaskAssignee(id, assigneeId) {
+      if (assigneeId !== null && !Number.isInteger(assigneeId)) {
+        throw new TypeError('assignee must be a member id or null');
+      }
+      const { changes } = stmt.updateTaskAssignee.run(assigneeId, id);
       return changes === 0 ? null : plain(stmt.getTask.get(id));
     },
 

@@ -279,3 +279,42 @@ Source: C-003. Depends on ISS-005. ISS-006 was merged in PR #36 (merge `04345ccc
 ### Notes for review
 
 - Setting a task to the status it already has is allowed and changes nothing. The issue does not cover this case.
+
+## ISS-008 — Task service: set or clear assignee
+
+Source: C-003. Depends on ISS-005 and ISS-003. ISS-007 was merged in PR #38 (merge `8471f7dea5265337a94e84121659742900fe65a8`), and its baseline record is PR #39.
+
+### Design
+
+- `src/store.js` gains `updateTaskAssignee(id, assigneeId)`. It rewrites only `assignee_id`, either to one member id or to `null`, and returns the updated row, or `null` for an unknown task. Anything that is not an integer or `null` is refused, and the foreign key refuses unknown members.
+- `src/tasks.js` gains `setAssignee(memberId, taskId, assigneeId)`.
+  - The caller must be a known member, and the task must be in the caller's team. Otherwise `setAssignee` returns `null`. A member of another team therefore cannot see or change the task.
+  - `assigneeId === null` clears the assignee, so the task shows as unassigned.
+  - Any other value must be the id of a member in the assignable set returned by the ISS-003 directory (`forMember(callerId).members`). That set is the caller's team, which is also the task's team. Anything else throws `TaskValidationError` before anything is written, so the task stays unchanged. This covers members of other teams, unknown ids, ids written as text, arrays, and objects.
+  - A task has exactly one assignee or none. A list of several ids is rejected (multiple assignees are excluded).
+  - Any member may assign or clear any task, including assigning it to themselves. There is no role or ownership check (FR-012).
+  - It returns the updated task in the `view` form.
+
+### Changes to earlier tests
+
+- `tests/store.test.js`: `updateTaskAssignee` was added to the exact list of store operations. The check that nothing can delete is unchanged.
+- `tests/tasks.test.js`: the list of service operations now includes `setAssignee`.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| A task's assignee can be set to exactly one member of the same team, and the change is persisted | `the assignee can be set to exactly one team member, and the change is persisted`: different callers set different assignees, including themselves, and each change is read back through a separate store connection. Title, description, and status are checked to be unchanged |
+| A task's assignee can be cleared to unassigned, and the change is persisted | `the assignee can be cleared to unassigned, and the change is persisted` |
+| An assignee id that is not a member of the task's team is rejected and leaves the task unchanged | `an assignee that is not a member of the task's team is rejected and leaves the task unchanged`: a member of another team, unknown ids, non-integer values, and arrays with one or two ids |
+| (Safety) The store refuses bad values on its own | `the store refuses non-id assignees and unknown members` |
+| (Safety) Missing tasks, other teams' tasks, and unknown callers | `missing tasks return null and unknown callers are refused` |
+
+### Test run
+
+`node --test`: 44 tests, 44 pass, 0 fail.
+
+### Notes for review
+
+- To test a member who is outside the task's team, the test creates a second team directly in the store. `add-member` still never creates a second team, and the FR-013 guard still passes.
+- The ISS-005 list test still sets its assignee directly in the database. I left it as it was so that this PR does not change an earlier issue's test.
