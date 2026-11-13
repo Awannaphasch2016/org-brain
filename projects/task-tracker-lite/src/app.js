@@ -57,8 +57,32 @@ function redirect(res, location, headers = {}) {
   send(res, 303, '', { Location: location, ...headers });
 }
 
-// routes: { 'GET /path': (req, res, ctx) => …, … }. These are protected routes.
-// ctx is { session, form() }, and session is a frozen { memberId }.
+// Finds the route for a request. An exact key such as 'GET /tasks/new' wins. Otherwise
+// a pattern key such as 'GET /tasks/:id' matches when each ':name' segment is a positive
+// integer (ISS-010). Returns { handler, params } or null.
+function findRoute(routes, method, pathname) {
+  const exact = routes[`${method} ${pathname}`];
+  if (exact) return { handler: exact, params: {} };
+  const parts = pathname.split('/');
+  for (const [key, handler] of Object.entries(routes)) {
+    const space = key.indexOf(' ');
+    if (key.slice(0, space) !== method || !key.includes('/:')) continue;
+    const pattern = key.slice(space + 1).split('/');
+    if (pattern.length !== parts.length) continue;
+    const params = {};
+    const ok = pattern.every((seg, i) => {
+      if (!seg.startsWith(':')) return seg === parts[i];
+      if (!/^[1-9][0-9]{0,15}$/.test(parts[i])) return false;
+      params[seg.slice(1)] = Number(parts[i]);
+      return true;
+    });
+    if (ok) return { handler, params: Object.freeze(params) };
+  }
+  return null;
+}
+
+// routes: { 'GET /path': (req, res, ctx) => …, 'GET /tasks/:id': …, … }. These are
+// protected routes. ctx is { session, params, form() }, and session is a frozen { memberId }.
 function createApp({ store, routes = {}, loginPage, secureCookies = false } = {}) {
   if (!store) throw new TypeError('store is required');
   const auth = createAuth(store);
@@ -89,9 +113,9 @@ function createApp({ store, routes = {}, loginPage, secureCookies = false } = {}
       return redirect(res, '/login', { 'Set-Cookie': sessionCookie(null, cookieOpts) });
     }
 
-    const route = routes[key];
+    const route = findRoute(routes, req.method, url.pathname);
     if (!route) return send(res, 404, 'Not found\n');
-    return route(req, res, { session, form: () => readForm(req) });
+    return route.handler(req, res, { session, params: route.params, form: () => readForm(req) });
   }
 
   return function requestListener(req, res) {
