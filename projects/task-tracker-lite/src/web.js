@@ -3,10 +3,13 @@
 // ISS-009: Web UI. Sign-in and sign-out pages (C-001, FR-010, FR-011, FR-013, FR-017,
 // NFR-002). It builds on the ISS-004 session gate in app.js. There is no registration
 // page or link: accounts are created only with the add-member command.
+// ISS-010: The task list (at / and /tasks), task detail, and create-task pages come from
+// task-pages.js.
 
 const { createApp } = require('./app');
 const { createDirectory } = require('./directory');
 const { page, sendHtml } = require('./html');
+const { createTaskPages } = require('./task-pages');
 
 function loginPage(req, res, { failed }) {
   const error = failed ? '<p class="error" role="alert">Incorrect username or password.</p>\n' : '';
@@ -30,19 +33,11 @@ function createWebApp({ store, secureCookies = false, routes = {} } = {}) {
     return me.members.find((m) => m.id === session.memberId).display_name;
   }
 
-  const home = (req, res, { session }) => {
-    sendHtml(res, 200, page({
-      title: 'Home',
-      signedInAs: whoIs(session),
-      body: '<h1>Task Tracker Lite</h1>\n<p>You are signed in.</p>',
-    }));
-  };
-
   return createApp({
     store,
     secureCookies,
     loginPage,
-    routes: { 'GET /': home, ...routes },
+    routes: { ...createTaskPages({ store, whoIs }), ...routes },
   });
 }
 

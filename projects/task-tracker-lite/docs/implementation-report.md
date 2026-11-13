@@ -357,3 +357,39 @@ Source: C-001. Depends on ISS-004. ISS-008 was merged in PR #40 (merge `53ffd532
 
 - The tests check the HTTP responses and the HTML a browser would receive. They do not drive a real browser, because the sandbox has no browser and no network. A person should open the pages once in a real browser before release.
 - The failed sign-in page does not fill the username back in. The ISS-004 `loginPage` hook only reports whether sign-in failed.
+
+## ISS-010 — Web UI: task list, task detail, and create-task pages
+
+Source: C-001. Depends on ISS-005 and ISS-009. ISS-009 was merged in PR #42 (merge `721006eb4c6a5756ab3ac44e716cabf1a4cd3e4f`), and its baseline record is PR #43.
+
+### Design
+
+- `src/task-pages.js`: `createTaskPages({ store, whoIs })` returns the task routes. They are built on the ISS-005 task service and use the ISS-009 `page` layout, so every page has the "Signed in as" header and the sign-out button.
+  - `GET /` and `GET /tasks`: the task list, a table with Title (a link to the detail page), Status, and Assignee, where the assignee is the display name or `unassigned`. It has a **New task** link, and shows "No tasks yet." when the list is empty.
+  - `GET /tasks/new`: a form with Title (required) and Description that posts to `/tasks`.
+  - `POST /tasks`: creates the task through `tasks.create`, so it starts as `To Do` and unassigned, then redirects (303) to the list. A missing or blank title shows the form again with status 400 and "Title is required.", keeps what was typed, and stores nothing.
+  - `GET /tasks/:id`: the detail page with title, description (line breaks kept, or "No description"), status, and assignee. An unknown id, or a task in another team, gets a 404 page.
+- `src/web.js`: the ISS-009 placeholder home page is replaced by the task list at `/`. Sign-in still redirects to `/`.
+- `src/app.js` (from ISS-004) gains support for routes with an id in the path, such as `GET /tasks/:id`. An exact route like `/tasks/new` takes priority, and a `:name` part only matches a positive whole number. Handlers receive the matched values as `ctx.params`. The session gate and every existing route behave as before.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| A signed-in member sees the task list (title, status, assignee or "unassigned") | `a signed-in member sees the task list with title, status, and assignee or "unassigned"`: the empty list, an unassigned task, and an assigned in-progress task, at both `/` and `/tasks` |
+| The member opens a task's detail page (title, description, status, assignee) | `a member opens a task's detail page showing title, description, status, and assignee`: opened by a member who did not create the task |
+| The member creates a task from a form, and it then appears in the list with status `To Do` and unassigned | `a member creates a task from a form, and it appears in the list as To Do and unassigned` |
+| (Safety) Submitting without a title stores nothing | `submitting the form without a title shows an error and stores nothing` |
+| (Safety) Task text is escaped | `task text is HTML-escaped on every page` |
+| (Safety) Bad ids | `unknown or malformed task ids get a not-found page` |
+| (Safety) Pages need sign-in | `the task pages are behind sign-in` |
+
+### Test run
+
+`node --test`: 58 tests, 58 pass, 0 fail.
+
+### Notes for review
+
+- After a task is created, the browser returns to the list, where the new task appears, rather than to the new task's detail page. This is my own choice, made to match the acceptance wording.
+- Some tests set up assignees and statuses through the task service, because ISS-011 has not added the web controls for them yet.
+- As in ISS-009, the tests check the HTTP responses and the HTML, not a real browser.
