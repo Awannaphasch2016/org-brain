@@ -172,3 +172,37 @@ Source: C-002. Depends on ISS-001 and ISS-002. ISS-003 was merged in PR #30 (mer
 - Sign-out is `POST` only. Combined with `SameSite=Lax`, a link on another site cannot sign a member out.
 - The FR-013 guard from ISS-002 still passes. No HTTP route can create a member.
 - There is no rate limiting on sign-in attempts, because the issue does not ask for it.
+
+## ISS-005 — Task service: create, list, and view tasks
+
+Source: C-003. Depends on ISS-001. ISS-004 was merged in PR #32 (merge `2fa9759cbc6d2eab1cd0b4cd5d79fc4f91831eb3`), and its baseline record is PR #33.
+
+### Design
+
+- `src/tasks.js`: `createTaskService(store)` returns a frozen service with `create`, `list`, and `view`. Each operation takes the caller's member id, which comes from the session.
+  - `create(memberId, { title, description })` stores the task in the caller's team. Status and assignee come from the schema defaults (`To Do`, no assignee). A missing, blank, or non-text title throws `TaskValidationError`, and so does a non-text description. In both cases the check runs before anything is written. The method returns the created task in the same form as `view`.
+  - `list(memberId)` returns every task in the caller's team, ordered by id, as `{ id, title, status, assignee, assigneeLabel }`. `assignee` is `{ id, display_name }` or `null`. `assigneeLabel` is the display name or `"unassigned"`.
+  - `view(memberId, taskId)` returns `{ id, title, description, status, assignee, assigneeLabel }`. It returns `null` when the task does not exist or is in another team.
+  - An unknown caller id throws `UnknownMemberError`. In the app, the ISS-004 session gate means this does not happen for normal requests.
+- There are no role checks or per-task ownership checks. Any member of the team can perform all three operations on any of the team's tasks (FR-012).
+- The service has no delete operation.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| Creating with a title (and optional description) stores the task in the caller's team with status `To Do` and no assignee | `create stores the task in the caller's team as To Do and unassigned` |
+| Creating without a title is rejected and stores nothing | `create without a title is rejected and stores nothing` |
+| Listing returns every task with title, status, and assignee or "unassigned" | `list returns every task with title, status, and assignee or "unassigned"`. ISS-008 has not added the assignee operation yet, so this test sets an assignee directly in the database |
+| Viewing returns one task's title, description, status, and assignee | `view returns one task's title, description, status, and assignee` |
+| Any authenticated member can perform all three, with no role or per-task check | `any member can create, list, and view with no role or per-task check` |
+| (Safety) Unknown callers are refused, and there is no delete operation | `unknown callers are refused`, `the service has no delete operation` |
+
+### Test run
+
+`node --test`: 31 tests, 31 pass, 0 fail.
+
+### Notes for review
+
+- No HTTP routes are added. ISS-010 connects this service to pages behind the ISS-004 session gate.
+- The `assignee` and `assigneeLabel` result shape is my own choice. It keeps a member whose display name is literally "unassigned" separate from a task with no assignee.
