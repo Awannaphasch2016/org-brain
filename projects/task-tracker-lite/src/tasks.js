@@ -3,8 +3,11 @@
 // ISS-005: Task service. Create, list, and view tasks (C-003).
 // FR-001, FR-002, FR-005, FR-008, FR-009, FR-012.
 // ISS-006: Edit title and description (FR-007, FR-012).
+// ISS-007: Change status (FR-003, FR-004, FR-012).
 // The caller is identified by the session's member id. Any member may perform every
 // operation on any task in their team. There are no roles and no per-task checks.
+
+const { TASK_STATUSES } = require('./store');
 
 class TaskValidationError extends Error {}
 class UnknownMemberError extends Error {}
@@ -80,6 +83,19 @@ function createTaskService(store) {
         title,
         description: description === undefined ? current.description : description,
       });
+      return view(memberId, taskId);
+    },
+
+    // Sets a task's status to one of 'To Do', 'In Progress', or 'Done'. Returns the
+    // updated task in the view form, or null when the task is not in the caller's team.
+    // Any other value is rejected and leaves the task unchanged.
+    setStatus(memberId, taskId, status) {
+      const current = view(memberId, taskId);
+      if (current === null) return null;
+      if (!TASK_STATUSES.includes(status)) {
+        throw new TaskValidationError(`status must be one of: ${TASK_STATUSES.join(', ')}`);
+      }
+      store.updateTaskStatus(taskId, status);
       return view(memberId, taskId);
     },
   });

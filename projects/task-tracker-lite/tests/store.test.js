@@ -135,6 +135,7 @@ test('the store exposes no delete operation for tasks', (t) => {
     'listMembers',
     'listTasks',
     'listTeams',
+    'updateTaskStatus',
     'updateTaskText',
   ]);
 });
