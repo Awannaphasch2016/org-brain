@@ -74,6 +74,7 @@ function openStore(filePath) {
     listTasks: db.prepare(
       'SELECT id, team_id, title, description, status, assignee_id FROM tasks WHERE team_id = ? ORDER BY id'
     ),
+    updateTaskText: db.prepare('UPDATE tasks SET title = ?, description = ? WHERE id = ?'),
   };
 
   return Object.freeze({
@@ -125,6 +126,16 @@ function openStore(filePath) {
     },
     listTasks(teamId) {
       return stmt.listTasks.all(teamId).map(plain);
+    },
+    // ISS-006: change a task's title and description. Returns the updated task, or null
+    // when no task has that id.
+    updateTaskText(id, { title, description }) {
+      requireNonEmptyString(title, 'title');
+      if (typeof description !== 'string') {
+        throw new TypeError('description must be a string');
+      }
+      const { changes } = stmt.updateTaskText.run(title, description, id);
+      return changes === 0 ? null : plain(stmt.getTask.get(id));
     },
 
     close() {

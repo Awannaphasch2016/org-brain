@@ -206,3 +206,40 @@ Source: C-003. Depends on ISS-001. ISS-004 was merged in PR #32 (merge `2fa9759c
 
 - No HTTP routes are added. ISS-010 connects this service to pages behind the ISS-004 session gate.
 - The `assignee` and `assigneeLabel` result shape is my own choice. It keeps a member whose display name is literally "unassigned" separate from a task with no assignee.
+
+## ISS-006 — Task service: edit title and description
+
+Source: C-003. Depends on ISS-005. ISS-005 was merged in PR #34 (merge `f75173a0c51b67b725fabe706db12b0746c9c8af`), and its baseline record is PR #35.
+
+### Design
+
+- `src/store.js` gains one write operation, `updateTaskText(id, { title, description })`. It rewrites only `title` and `description`, and returns the updated row, or `null` for an unknown id. It checks its inputs, and the schema `CHECK` constraints still apply.
+- `src/tasks.js` gains `edit(memberId, taskId, { title, description })`.
+  - The caller must be a known member, and the task must be in the caller's team. Otherwise `edit` returns `null`, the same way `view` does.
+  - An empty, blank, or non-text title throws `TaskValidationError` before anything is written, so the task stays unchanged. A non-text description is rejected the same way.
+  - If `description` is left out, the current description is kept. An empty string clears it.
+  - Any member may edit any task in the team. There is no role or ownership check (FR-012).
+  - It returns the updated task in the `view` form.
+- Status and assignee are not touched. ISS-007 and ISS-008 handle them.
+
+### Changes to earlier tests
+
+- `tests/store.test.js`: `the store exposes no delete operation for tasks` lists the exact store operations, so `updateTaskText` was added to that list. The check that no operation name contains delete, remove, destroy, drop, or purge is unchanged.
+- `tests/tasks.test.js`: `the service has no delete operation` now expects `edit` as well.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| Any authenticated member can change an existing task's title and description, and the change is persisted | `any member can change a task's title and description, and the change is persisted`: a member who did not create the task edits it, and a separate store connection reads the change back |
+| An edit with an empty title is rejected and leaves the task unchanged | `an edit with an empty title is rejected and leaves the task unchanged` |
+| (Detail) Description handling | `the description can be cleared, or kept by leaving it out` |
+| (Safety) Missing tasks and unknown callers | `editing a missing task returns null, and unknown callers are refused` |
+
+### Test run
+
+`node --test`: 35 tests, 35 pass, 0 fail.
+
+### Notes for review
+
+- Keeping the current description when `description` is left out is my own choice. The issue does not say what happens in that case. ISS-011's edit form will always send both fields.

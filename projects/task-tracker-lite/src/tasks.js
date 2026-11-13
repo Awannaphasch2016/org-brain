@@ -2,6 +2,7 @@
 
 // ISS-005: Task service. Create, list, and view tasks (C-003).
 // FR-001, FR-002, FR-005, FR-008, FR-009, FR-012.
+// ISS-006: Edit title and description (FR-007, FR-012).
 // The caller is identified by the session's member id. Any member may perform every
 // operation on any task in their team. There are no roles and no per-task checks.
 
@@ -61,6 +62,26 @@ function createTaskService(store) {
     },
 
     view,
+
+    // Changes an existing task's title and description. If description is omitted, the
+    // current description is kept. Returns the updated task in the view form, or null
+    // when the task is not in the caller's team. An empty title is rejected and leaves
+    // the task unchanged.
+    edit(memberId, taskId, { title, description } = {}) {
+      const current = view(memberId, taskId);
+      if (current === null) return null;
+      if (typeof title !== 'string' || title.trim() === '') {
+        throw new TaskValidationError('title is required');
+      }
+      if (description !== undefined && typeof description !== 'string') {
+        throw new TaskValidationError('description must be text');
+      }
+      store.updateTaskText(taskId, {
+        title,
+        description: description === undefined ? current.description : description,
+      });
+      return view(memberId, taskId);
+    },
   });
 }
 
