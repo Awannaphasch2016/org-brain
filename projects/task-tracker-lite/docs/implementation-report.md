@@ -393,3 +393,39 @@ Source: C-001. Depends on ISS-005 and ISS-009. ISS-009 was merged in PR #42 (mer
 - After a task is created, the browser returns to the list, where the new task appears, rather than to the new task's detail page. This is my own choice, made to match the acceptance wording.
 - Some tests set up assignees and statuses through the task service, because ISS-011 has not added the web controls for them yet.
 - As in ISS-009, the tests check the HTTP responses and the HTML, not a real browser.
+
+## ISS-011 — Web UI: edit, status, and assignee controls on task detail
+
+Source: C-001. Depends on ISS-006, ISS-007, ISS-008, and ISS-010. ISS-010 was merged in PR #44 (merge `d2c899d8be2106b8468286cca836654ddd850a0f`), and its baseline record is PR #45.
+
+### Design
+
+- `src/task-pages.js` adds three plain HTML forms to the detail page, under the read-only details. They need no client-side JavaScript.
+  - **Edit**: `POST /tasks/:id/edit` with `title` and `description`, prefilled with the current values. It calls ISS-006 `edit`.
+  - **Status**: `POST /tasks/:id/status` with a `<select name="status">` that offers exactly `To Do`, `In Progress`, and `Done`, with the current status preselected. It calls ISS-007 `setStatus`.
+  - **Assignee**: `POST /tasks/:id/assignee` with a single (not multiple) `<select name="assignee">`. It offers "unassigned" (an empty value) and then each member of the caller's team from the ISS-003 directory, by display name, with the current assignee preselected. It calls ISS-008 `setAssignee`.
+- After a successful change, the browser is redirected (303) back to `/tasks/:id`, so the stored value is what appears on reload.
+- A rejected value shows the detail page again with status 400 and an error message. Rejected values are an empty title, a status outside the three, and an assignee who is not a team member or not a valid id. The service has already left the task unchanged. A failed edit keeps the typed title and description, escaped.
+- A missing `assignee` field is rejected and does not clear the assignee. Only an explicit empty value means "unassigned".
+- An unknown task, or a task in another team, gets a 404 page. All three routes sit behind the ISS-004 session gate.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| From the task detail page, a signed-in member can edit title and description | `editing title and description is shown on reload`: done by a member who did not create the task, and the list shows the new title |
+| …choose a status from a control offering exactly `To Do`, `In Progress`, and `Done` | `the detail page offers edit, status, and assignee controls as plain HTML forms` (exact options) and `every status choice is applied and shown on reload` (all six transitions) |
+| …choose an assignee from a control offering "unassigned" or exactly one team member | `the detail page offers…` (exact options, a single select, and no members of other teams) and `the assignee can be set to one team member or cleared, and is shown on reload` |
+| Each change is shown on reload | Each change test submits the form, follows the redirect, and reloads `/tasks/:id`. The change also shows in the list |
+| (Safety) Rejected values leave the task unchanged | `rejected values show an error and leave the task unchanged`: blank or missing title, unknown or wrong-case status, missing status, a member of another team, an unknown id, a non-numeric value, a missing assignee, and repeated assignee values |
+| (Safety) Missing tasks, sign-in, and other teams | `changes to missing tasks get a not-found page, and the controls need sign-in`, `a member of another team cannot change the team's tasks` |
+
+### Test run
+
+`node --test`: 65 tests, 65 pass, 0 fail.
+
+### Notes for review
+
+- All eleven planned feature issues (ISS-001 to ISS-011) are now implemented.
+- As with ISS-009 and ISS-010, the tests check the HTTP responses and the HTML, not a real browser. A person should click through the pages in a browser before release.
+- The three controls are separate forms, so saving one does not submit the others. A status or assignee change never resubmits the title and description. This is my own choice. A side effect is that unsaved text in the edit form is lost when a member uses one of the other two controls.
