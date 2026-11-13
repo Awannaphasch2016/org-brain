@@ -39,9 +39,9 @@ planning:
     approvedBy: "slack:T0CFZ4ZT20Z:U0CFRUV378D"
 implementation:
   status: approved
-  pullRequest: 28
+  pullRequest: 30
   baseline:
-    mergeCommit: 456a39fdb1ef7a798576b14bb0f8ab4a9d164d54
+    mergeCommit: c65ae58db2239b8323e28daaba3f996e6aeb3356
     approvedAt: null
     approvedBy: "Anak Wannaphaschaiyong"
 release:
