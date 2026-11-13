@@ -99,7 +99,7 @@ node src/add-member.js --db <path> --username <name> --display-name <name> [--te
 
 ## ISS-003 — Team and member directory
 
-Source: C-004. Depends on ISS-001. ISS-002 was merged in PR #28 (merge `456a39fdb1ef7a798576b14bb0f8ab4a9d164d54`), and its baseline record is PR #29.
+Source: C-004. GitHub issue #16. Depends on ISS-001. ISS-002 was merged in PR #28 (merge `456a39fdb1ef7a798576b14bb0f8ab4a9d164d54`), and its baseline record is PR #29.
 
 ### Design
 
@@ -125,3 +125,50 @@ Source: C-004. Depends on ISS-001. ISS-002 was merged in PR #28 (merge `456a39fd
 ### Housekeeping
 
 - PR #28 accidentally dropped one sentence from the ISS-001 assumptions in this report. This PR restores it: "The approver chose to keep it in the Slack thread."
+
+## ISS-004 — Authentication and session handling
+
+Source: C-002. Depends on ISS-001 and ISS-002. ISS-003 was merged in PR #30 (merge `c65ae58db2239b8323e28daaba3f996e6aeb3356`), and its baseline record is PR #31.
+
+### Decisions
+
+- HTTP uses Node's built-in `node:http`, with no framework. The architecture left the framework to implementation.
+- Sessions are kept in server memory, as the approver chose in the Slack thread. Each session is identified by a random 256-bit token sent in the `sid` cookie with `HttpOnly`, `SameSite=Lax`, and `Path=/`. The `Secure` flag is available through `createApp({ secureCookies: true })` for HTTPS hosting.
+- Because sessions are in memory, restarting the server signs everyone out. Sessions have no expiry.
+
+### Files
+
+- `src/auth.js`: `createAuth(store)` provides `signIn(username, password)`, which returns a token or `null`, plus `sessionFor(token)` and `signOut(token)`.
+  - A session is a frozen `{ memberId }` and holds nothing else.
+  - Every sign-in creates a new token, so an old token cannot be reused for a new sign-in.
+  - An unknown username is checked against a dummy hash, so it takes about as long to reject as a wrong password.
+  - If a session's member no longer exists, the session is invalid.
+- `src/app.js`: `createApp({ store, routes, loginPage, secureCookies })` returns a request handler.
+  - `GET /login` and `POST /login` (an `application/x-www-form-urlencoded` form with `username` and `password`) are the only public routes.
+  - A successful sign-in sets the cookie and redirects (303) to `/`. A failed sign-in returns 401 and sets no cookie.
+  - `POST /logout` ends the session, clears the cookie, and redirects (303) to `/login`.
+  - Any other request without a valid session is redirected to `/login` (303) for GET and HEAD, and gets 401 for other methods.
+  - Later issues add pages and task routes through `routes` and `loginPage`. Every route added that way sits behind the session gate.
+  - Forms are limited to 8 KiB.
+- `tests/auth.test.js`: the acceptance tests. They provision members with the real `add-member` command and send real HTTP requests to a loopback server.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| A member created by `add-member` can sign in and gets a session holding only their member id | `a member created by add-member signs in and the session holds only their member id` |
+| Wrong credentials are rejected | `wrong credentials are rejected and grant no session`: wrong password, another member's password, unknown user, empty password, and an empty form |
+| After sign-out, the session no longer grants access | `after sign-out the session no longer grants access` |
+| Every request other than `GET /login` and `POST /login` without a valid session is rejected or redirected to sign-in | `every request except GET and POST /login needs a valid session`: no cookie, a forged token, an empty token, and a cookie with a different name, across several GET paths and several non-GET methods. It also checks that no protected handler ran |
+| (Safety) Every sign-in gets a new random token | `each sign-in issues a new random token` |
+
+### Test run
+
+`node --test`: 24 tests, 24 pass, 0 fail.
+
+### Notes for review
+
+- `GET /login` currently returns a plain-text placeholder. ISS-009 replaces it with the real sign-in page through `loginPage`.
+- Sign-out is `POST` only. Combined with `SameSite=Lax`, a link on another site cannot sign a member out.
+- The FR-013 guard from ISS-002 still passes. No HTTP route can create a member.
+- There is no rate limiting on sign-in attempts, because the issue does not ask for it.
