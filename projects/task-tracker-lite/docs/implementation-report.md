@@ -318,3 +318,42 @@ Source: C-003. Depends on ISS-005 and ISS-003. ISS-007 was merged in PR #38 (mer
 
 - To test a member who is outside the task's team, the test creates a second team directly in the store. `add-member` still never creates a second team, and the FR-013 guard still passes.
 - The ISS-005 list test still sets its assignee directly in the database. I left it as it was so that this PR does not change an earlier issue's test.
+
+## ISS-009 — Web UI: sign-in and sign-out pages
+
+Source: C-001. Depends on ISS-004. ISS-008 was merged in PR #40 (merge `53ffd53211f8fe7c5b6555b354fc2741cce38007`), and its baseline record is PR #41.
+
+### Design
+
+- The pages are plain server-rendered HTML forms with no client-side JavaScript, so they work in any standard browser (FR-017, NFR-002).
+- `src/html.js` holds the shared helpers:
+  - `escapeHtml` escapes all user text before it is shown.
+  - `page` is the common layout. Every signed-in page shows "Signed in as <name>" and a visible **Sign out** button, which is a `POST /logout` form.
+  - `sendHtml` sends a page with security headers: a Content-Security-Policy with `default-src 'none'`, `form-action 'self'`, and `frame-ancestors 'none'`, plus `nosniff`, `Referrer-Policy: same-origin`, and `no-store`.
+- `src/web.js`: `createWebApp({ store, secureCookies, routes })` connects the real `loginPage` and the signed-in pages to the ISS-004 `createApp`, so every page except sign-in sits behind the session gate.
+  - `GET /login` shows a username and password form that posts to `/login`.
+  - A failed sign-in shows the same form again with "Incorrect username or password." and status 401.
+  - A successful sign-in redirects to `/`. For now `/` is a simple signed-in home page. ISS-010 adds the task pages.
+- There is no registration route, page, or link. Accounts can only be created with `add-member` (FR-013). A signed-out request for `/register` or `/signup` goes to sign-in like any other page. A signed-in request gets 404.
+- `src/server.js` lets a person run the app locally in a browser: `node src/server.js --db <path> [--port 3000] [--host 127.0.0.1] [--secure-cookies]`. It is a local entry point only. Nothing is deployed.
+
+### Acceptance mapping
+
+| Acceptance clause | Test |
+|---|---|
+| A member can open the sign-in page in a standard browser | `the sign-in page is an HTML form a standard browser can submit, with no registration link`: an HTML document with a POST form, a username field, a password field, and a submit button, and no script |
+| A member can sign in, and sign out with a visible control | `a member signs in, sees a visible sign-out control, and signs out` |
+| No registration page or link exists | `the sign-in page is an HTML form…` (no registration wording on the page) and `no registration page exists, even when signed in` (404 for `/register`, `/signup`, `/sign-up`, and `/members/new`, and no member is created) |
+| Requesting any task page while signed out leads to the sign-in page | `requesting any task page while signed out leads to the sign-in page`: `/`, `/tasks`, `/tasks/new`, `/tasks/1`, and `/tasks/1/edit` redirect to `/login`, and POST requests get 401 |
+| (Safety) A failed sign-in gives no session | `wrong credentials show the sign-in page again with an error and no session` |
+| (Safety) User text is escaped | `member names are HTML-escaped` |
+| (Runnable) The server command works | `the server command starts and serves the sign-in page` |
+
+### Test run
+
+`node --test`: 51 tests, 51 pass, 0 fail.
+
+### Notes for review
+
+- The tests check the HTTP responses and the HTML a browser would receive. They do not drive a real browser, because the sandbox has no browser and no network. A person should open the pages once in a real browser before release.
+- The failed sign-in page does not fill the username back in. The ISS-004 `loginPage` hook only reports whether sign-in failed.
