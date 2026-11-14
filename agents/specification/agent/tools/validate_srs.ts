@@ -1,8 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { readTorBaselineSha256 } from "../../../../lib/baseline.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
-import { validateSrs } from "../../../../lib/srs-validate.mjs";
+import { assessSrsGate, validateSrs } from "../../../../lib/srs-validate.mjs";
 import { assessWrite } from "../../../../lib/write-policy.mjs";
 
 async function readOptional(
@@ -29,18 +28,17 @@ export default defineTool({
     const projectYaml = await sandbox.readTextFile({ path: `${root}/project.yaml` });
     if (!projectYaml) throw new Error(`Missing ${root}/project.yaml`);
     const project = parseSimpleYaml(projectYaml);
-    const baseline = readTorBaselineSha256(project);
-    if (!baseline.ok || !baseline.sha256 || !baseline.path) {
+    const torPath = `${root}/${project.tor?.path ?? "docs/tor.md"}`;
+    const torText = (await sandbox.readTextFile({ path: torPath })) ?? "";
+    const baseline = assessSrsGate({ project, torText });
+    if (!baseline.ok || !baseline.sha256) {
       return {
         ok: false,
-        errors: [`project.yaml is not the new format: ${baseline.reason ?? "tor.baseline.sha256 is missing"}`],
+        errors: [`SRS is blocked until the approved TOR hash matches: ${baseline.reason ?? "tor-not-approved"}`],
         warnings: [],
         reportPath: null,
       };
     }
-    const torPath = `${root}/${baseline.path}`;
-    const torText = await sandbox.readTextFile({ path: torPath });
-    if (!torText) throw new Error(`Missing frozen TOR at ${torPath}`);
     const result = validateSrs({
       srs: await readOptional(sandbox, `${root}/docs/srs.md`),
       torText,

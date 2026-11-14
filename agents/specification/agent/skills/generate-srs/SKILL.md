@@ -13,10 +13,10 @@ Write `docs/srs.md` with these sections, in order:
 5. Acceptance Criteria
 6. Constraints and References
 
-Use `FR-001`, `NFR-001`, and `AC-001` headings. Give every functional and nonfunctional requirement a `Source` of a TOR clause or an `EL-nnn` item. Give every acceptance criterion a `Verifies` line pointing at existing requirement ids.
+Use `FR-001`, `NFR-001`, and `AC-001` headings. Give every functional and nonfunctional requirement a `Source` that cites at least one `IS-nnn` present in the approved TOR. An `EL-nnn` item may be cited in addition. Do not cite an `OS-nnn`, and do not restate text the TOR excludes. Give every acceptance criterion a `Verifies` line pointing at existing requirement ids.
 
 Preserve identifiers when you revise wording and the obligation stays the same. Do not reintroduce TOR exclusions. Do not invent numerical thresholds. Do not choose architecture unless the TOR or an approved decision requires it. Leave unresolved assumptions visible.
 
 Call `validate_srs` before `create_srs_pull_request`. If validation fails, or a gap line is still `blocking | unresolved`, fix the document or ask another question. Do not open the pull request.
 
-The pull request summarizes the TOR baseline, the human decisions, the validation result, and remaining non-blocking issues. It must not change `docs/tor.md`.
+The pull request cites `tor.baseline.mergeCommit` and `tor.baseline.sha256`. It must not change `docs/tor.md` and it must not commit `docs/_analysis.md`. Refuse the pull request when the TOR is not approved or the hash does not match.
