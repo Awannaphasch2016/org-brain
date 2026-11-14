@@ -26,12 +26,14 @@ export function gateGithub({
   contents = {},
   files = {},
   combinedState = "success",
+  headOnRead,
 } = {}) {
   const state = {
     pulls: structuredClone(pulls),
     comments: structuredClone(comments),
     merges: [],
     closes: [],
+    pullReads: {},
   };
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
@@ -90,8 +92,12 @@ export function gateGithub({
       return http({ sha, files: commit?.files ?? [] });
     }
     if (method === "GET" && /\/pulls\/\d+$/.test(pathname)) {
-      const pull = state.pulls[pullNumber(/\/pulls\/(\d+)$/)];
+      const number = pullNumber(/\/pulls\/(\d+)$/);
+      const pull = state.pulls[number];
       if (!pull) return http({ message: "Not Found" }, 404);
+      state.pullReads[number] = (state.pullReads[number] ?? 0) + 1;
+      const swapped = headOnRead?.({ number, read: state.pullReads[number], pull });
+      if (swapped) return http({ ...pull, head: { ...pull.head, sha: swapped } });
       return http(pull);
     }
     if (method === "GET" && pathname.includes("/contents/")) {

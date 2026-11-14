@@ -84,6 +84,14 @@ test("recording diff is accepted only for the approved pull request and commit",
     approval: { decision: { action: "approve", pr: 12, headSha: HEAD } },
   });
   assert.equal(claimed.reason, "missing approval");
+
+  const recorded = recordYaml(before, { pullRequest: 12, mergeCommit: MERGE });
+  const duplicate = recorded.replace("title: Demo", "title: Pwned\ntitle: Demo");
+  assert.equal(evaluate(recorded, { afterText: duplicate, afterYaml: parseSimpleYaml(duplicate) }).reason, "yaml trick");
+  const anchored = recorded.replace("title: Demo", "title: &label Demo");
+  assert.equal(evaluate(recorded, { afterText: anchored }).reason, "yaml trick");
+  const renamed = evaluate(recorded, { files: [{ path: PATH, status: "renamed" }] });
+  assert.equal(renamed.reason, "extra file");
 });
 
 test("a recording pull request auto-merges on its own path and the human gate refuses it", async () => {
@@ -162,7 +170,7 @@ function approvalFor() {
 
 function evaluate(after, overrides = {}) {
   return evaluateRecordingPullRequest({
-    files: overrides.files ?? [{ path: PATH }],
+    files: overrides.files ?? [{ path: PATH, status: "modified" }],
     reference: overrides.reference === undefined ? reference() : overrides.reference,
     approval: overrides.approval === undefined ? approvalFor() : overrides.approval,
     sourcePull: overrides.sourcePull === undefined
@@ -170,6 +178,8 @@ function evaluate(after, overrides = {}) {
       : overrides.sourcePull,
     beforeYaml: parseSimpleYaml(before),
     afterYaml: parseSimpleYaml(after),
+    beforeText: before,
+    afterText: overrides.afterText ?? after,
   });
 }
 

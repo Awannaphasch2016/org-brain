@@ -49,6 +49,8 @@ test("stage table offers only the actions for that stage", () => {
   assert.equal(baseline.blocks.some((block) => block.type === "actions"), false);
   assert.equal(gateApproverIds({}).join(","), ANAK);
   assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0CFRUV378D, UEXTRA" }), [ANAK, "UEXTRA"]);
+  assert.throws(() => gateApproverIds({ FACTORY_GATE_APPROVER_IDS: " , " }), /fail-closed/);
+  assert.throws(() => gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "WBOTUSER01" }), /fail-closed/);
 });
 
 test("Slack signatures accept the fixture and reject a bad, missing, or stale signature", async () => {
@@ -63,6 +65,11 @@ test("Slack signatures accept the fixture and reject a bad, missing, or stale si
     verifySlackRequestSignature({ signingSecret: SECRET, timestamp: String(Number(timestamp) - 301), rawBody: raw, signature, now }).reason,
     "timestamp outside allowed skew",
   );
+  assert.equal(
+    verifySlackRequestSignature({ signingSecret: SECRET, timestamp: String(Number(timestamp) + 301), rawBody: raw, signature, now }).reason,
+    "timestamp outside allowed skew",
+  );
+  assert.equal(verifySlackRequestSignature({ signingSecret: SECRET, timestamp: `${timestamp}.5`, rawBody: raw, signature, now }).reason, "malformed timestamp");
   const request = new Request("https://example.test/eve/specification/v1/slack", {
     method: "POST",
     headers: {
@@ -91,6 +98,11 @@ test("onInteraction ignores eve controls, bots, and non-allowlisted people or ch
   assert.equal((await handleGateClick(click(harness, { actor: { id: "UOTHER", isBot: false, teamId: "T0TEAM" } }))).reason, "user is not on the factory allowlist");
   assert.equal((await handleGateClick(click(harness, { actor: { id: ANAK, isBot: true, teamId: "T0TEAM" } }))).reason, "bot click");
   assert.equal((await handleGateClick(click(harness, { channelId: "COTHER" }))).reason, "channel is not on the allowlist");
+  assert.equal((await handleGateClick(click(harness, { allowedUserIds: [] }))).reason, "fail-closed: factory allowlist is empty");
+  assert.match(
+    (await handleGateClick(click(harness, { env: { SLACK_SIGNING_SECRET: SECRET, FACTORY_GATE_APPROVER_IDS: "," } }))).reason,
+    /fail-closed/,
+  );
   assert.equal(actorFromUsersInfo(ANAK, { ok: true, user: { is_bot: true } }).actor.isBot, true);
   assert.equal(actorFromUsersInfo(ANAK, { ok: false }).ok, false);
   assert.equal(harness.calls.some((call) => call.method === "POST" || call.method === "PUT"), false);
@@ -167,13 +179,23 @@ test("decision JSON round-trips and an unknown schema is rejected", () => {
 });
 
 test("model tools do not receive a merge tool, and this repo does not claim a shared Slack router", async () => {
+  const forbidden = [
+    "mergeApprovedPullRequest",
+    "mergeRecordingPullRequest",
+    "sealMergeAuthorization",
+    "markVerifiedDecision",
+    "handleGateClick",
+    "merge-auth",
+    "trustedWebhook",
+    "/merge",
+  ];
   const files = await walk(new URL("agents/", root));
   for (const file of files) {
-    if (!file.pathname.endsWith(".ts")) continue;
+    if (!/\.(ts|mjs)$/.test(file.pathname)) continue;
     const text = await readFile(file, "utf8");
-    assert.equal(text.includes("mergeApprovedPullRequest"), false, file.pathname);
-    assert.equal(text.includes("mergeRecordingPullRequest"), false, file);
-    assert.equal(text.includes("/merge"), false, file);
+    for (const token of forbidden) {
+      assert.equal(text.includes(token), false, `${file.pathname} contains ${token}`);
+    }
   }
   const readme = await readFile(new URL("README.md", root), "utf8");
   assert.match(readme, /does not add a shared Slack router/);
@@ -224,9 +246,9 @@ function click(harness, overrides = {}) {
     requestTimestamp: timestamp,
     signature: signSlackRequest({ signingSecret: SECRET, timestamp, rawBody: value }),
     now,
-    env: { SLACK_SIGNING_SECRET: SECRET },
+    env: overrides.env ?? { SLACK_SIGNING_SECRET: SECRET },
     client: harness.client,
-    allowedUserIds: [ANAK],
+    allowedUserIds: overrides.allowedUserIds ?? [ANAK],
     allowedChannelIds: [CHANNEL],
     loadProjectUsers: async () => [ANAK],
     post: overrides.post,

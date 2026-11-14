@@ -4,6 +4,8 @@ export const PENDING_KIND: string;
 export const REASON_PROMPT: string;
 
 export function gateIdempotencyKey(input: {
+  repo: string;
+  pr: number;
   teamId: string;
   channel: string;
   messageTs: string;

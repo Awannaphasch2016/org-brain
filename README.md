@@ -24,7 +24,7 @@ The app manifest is `docs/slack-app-manifest.yaml`. Direct messages are disabled
 
 The other agents serve `/eve/architecture/v1/slack`, `/eve/planning/v1/slack`, `/eve/implementation/v1/slack`, `/eve/change-control/v1/slack`, and `/eve/release/v1/slack`. One Slack app has one event URL and one interactivity URL. This repository does not add a shared Slack router. Every agent's channel imports the same gate handler (`lib/slack-gate.ts`), so a click is handled by whichever of those URLs the Slack app currently points at. A single router in front of all six agents is the direction for later work.
 
-Gate buttons are Approve, Reject, and Request revision. Plain code renders only the actions that are valid for the stage. The default approver is Slack user `U0CFRUV378D`, overridable with `FACTORY_GATE_APPROVER_IDS`. A bot or assistant click does not count. Phase 1 TOR uploads, when that flow lands, are text only (`.md` or `.txt`) up to 1 MB. That default is overridable later; this change does not accept PDF or DOCX.
+Gate buttons are Approve, Reject, and Request revision. Plain code renders only the actions that are valid for the stage. The default approver is Slack user `U0CFRUV378D`. That id is a starting value only: the owner must verify it is Anak's current Slack user id before relying on it. Override it with `FACTORY_GATE_APPROVER_IDS`. An empty approver list allows nobody. A bot or assistant click does not count. Phase 1 TOR uploads, when that flow lands, are text only (`.md` or `.txt`) up to 1 MB. That default is overridable later; this change does not accept PDF or DOCX.
 
 ## Environment
 
@@ -38,10 +38,10 @@ Secrets stay in the host environment. None are required to install, typecheck, v
 | `GITHUB_CONNECTOR` | Optional GitHub App via Vercel Connect (`principalType: "app"`). Used when the app env above is not set. |
 | `GITHUB_TOKEN` | Personal-token fallback for the authored GitHub tools. It remains until the GitHub App is verified. |
 | `FACTORY_REQUIRE_APP` | Set to `1` to refuse the personal-token fallback. |
-| `FACTORY_GATE_APPROVER_IDS` | Comma-separated Slack user ids allowed to approve. Default is `U0CFRUV378D` only. |
+| `FACTORY_GATE_APPROVER_IDS` | Comma-separated human Slack user ids (`U…`) allowed to approve. Unset uses `U0CFRUV378D`, which the owner must verify. An empty or invalid list allows nobody. |
 | `FACTORY_GATE_DENY_SLACK_IDS` | Slack user ids that never count, even if they are also listed as approvers. |
-| `FACTORY_REQUIRED_CHECK` | GitHub check name that must be green before a merge. Default is `check`. |
-| `GITHUB_REPOSITORY` | `owner/repo`. Defaults to `Awannaphasch2016/wewebplus-software-factory`. |
+| `FACTORY_REQUIRED_CHECK` | Exact GitHub check name that must be green before a merge. Unset pins `check`. Every check run on that commit must be completed and successful. |
+| `GITHUB_REPOSITORY` | Required `owner/repo`. The tools refuse to guess. This repository is `Awannaphasch2016/org-brain`. |
 | `SPECIFICATION_AGENT_MODEL` | Model override for the Specification Agent. Default `anthropic/claude-opus-5.5`. Architecture, planning, implementation, change control, and release fall back to this value unless `ARCHITECTURE_AGENT_MODEL`, `PLANNING_AGENT_MODEL`, `IMPLEMENTATION_AGENT_MODEL`, `CHANGE_CONTROL_AGENT_MODEL`, or `RELEASE_AGENT_MODEL` is set. |
 | `VERCEL_OIDC_TOKEN`, team id, project id | Sandbox and AI Gateway. Supplied on Vercel. |
 

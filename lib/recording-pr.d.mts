@@ -10,6 +10,7 @@ export function parseRecordingReference(body: string): {
   repo: string;
 } | null;
 export function changedYamlPaths(before: Record<string, any> | null, after: Record<string, any> | null, prefix?: string): string[];
+export function recordingYamlIssue(text: string): string | null;
 export function evaluateRecordingPullRequest(input: {
   files: readonly { path: string }[];
   reference: {
@@ -32,6 +33,8 @@ export function evaluateRecordingPullRequest(input: {
   } | null;
   beforeYaml: Record<string, any> | null;
   afterYaml: Record<string, any> | null;
+  beforeText?: string | null;
+  afterText?: string | null;
 }): {
   ok: boolean;
   reason: string;
