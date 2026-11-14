@@ -114,10 +114,31 @@ async function filesUnder(directory) {
   return files;
 }
 
-export async function guidelineFiles() {
-  return (await filesUnder(resolve(knowledgeRoot, "guidelines"))).filter(
-    (path) => path.endsWith(".md") && !path.endsWith(`${sep}README.md`),
+const APPROVAL_REQUIRED = /^<!--\s*approval:\s*required\s*-->/i;
+
+async function classifyGuidelines() {
+  const paths = (await filesUnder(resolve(knowledgeRoot, "guidelines"))).filter(
+    (path) =>
+      path.endsWith(".md") &&
+      !path.endsWith(`${sep}README.md`) &&
+      !path.endsWith(`${sep}tor-contract-fields.md`),
   );
+  const approved = [];
+  const pending = [];
+  for (const path of paths) {
+    const contents = await readFile(path, "utf8");
+    if (APPROVAL_REQUIRED.test(contents)) pending.push(path);
+    else approved.push(path);
+  }
+  return { approved, pending };
+}
+
+export async function guidelineFiles() {
+  return (await classifyGuidelines()).approved;
+}
+
+export async function pendingGuidelineFiles() {
+  return (await classifyGuidelines()).pending;
 }
 
 export async function readManifest() {
@@ -257,6 +278,7 @@ export async function verifyKnowledge() {
   }
 
   const guidelines = await guidelineFiles();
+  const pendingGuidelines = await pendingGuidelineFiles();
   for (const guideline of guidelines) {
     const contents = await readFile(guideline, "utf8");
     if (BANNED_GUIDELINE.test(contents)) {
@@ -307,12 +329,35 @@ export async function verifyKnowledge() {
     }
   }
 
+  for (const guideline of pendingGuidelines) {
+    const contents = await readFile(guideline, "utf8");
+    if (BANNED_GUIDELINE.test(contents)) {
+      fail(`${displayPath(guideline)} contains project-specific content. Guidelines must stay reusable.`);
+    }
+    const body = contents.replace(/^<!--\s*approval:\s*required\s*-->\r?\n/i, "");
+    const metadata = body.match(
+      /^<!--\s*sources:\s*([a-z0-9,\s-]+)\s*-->\r?\n<!--\s*priority:\s*(-?\d+)\s*-->/i,
+    );
+    if (!metadata) {
+      fail(`${displayPath(guideline)} needs approval and must still name its sources and priority.`);
+    }
+    const referencedSources = metadata[1]
+      .split(",")
+      .map((source) => source.trim())
+      .filter(Boolean);
+    if (referencedSources.some((source) => !sourceIds.includes(source))) {
+      fail(`${displayPath(guideline)} references an unknown source.`);
+    }
+  }
+
   const allowedFiles = new Set([
     manifestPath,
     resolve(knowledgeRoot, "manifest.schema.json"),
     resolve(knowledgeRoot, "guidelines/README.md"),
+    resolve(knowledgeRoot, "guidelines/tor-contract-fields.md"),
     resolve(knowledgeRoot, "sources/README.md"),
     ...guidelines,
+    ...pendingGuidelines,
     ...manifest.sources.map((source) => resolve(repoRoot, source.snapshotPath)),
     ...provenancePaths,
   ]);
