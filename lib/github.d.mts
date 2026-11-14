@@ -8,7 +8,32 @@ export function assertMergeAuthorized(
 ): void;
 export function assertInsideProject(projectId: string, filePath: string): string;
 export function assertSrsCommitPath(projectId: string, filePath: string): string;
+export function assertSetupCommitPath(projectId: string, filePath: string): string;
 export function assertBaselineCommitPath(projectId: string, filePath: string): string;
+export function openSetupPullRequest(
+  client: GithubClient,
+  input: {
+    projectId: string;
+    baseBranch: string;
+    stamp: string;
+    title?: string;
+    body: string;
+    files: readonly { path: string; content: string }[];
+  },
+): Promise<{ url: string; number: number; branch: string; headSha: string }>;
+export function openProjectYamlPullRequest(
+  client: GithubClient,
+  input: {
+    projectId: string;
+    baseBranch: string;
+    branch: string;
+    title: string;
+    body: string;
+    message: string;
+    projectYamlPath?: string;
+    projectYaml: string;
+  },
+): Promise<{ url: string; number: number; branch: string; headSha: string; projectYaml: string }>;
 export function planSrsPullRequest(input: {
   validationOk: boolean;
   projectId: string;
