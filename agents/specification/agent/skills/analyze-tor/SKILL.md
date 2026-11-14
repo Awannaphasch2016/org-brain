@@ -4,7 +4,7 @@ description: Extract a frozen TOR into objectives, scope, requirements, delivera
 
 # Analyze a TOR
 
-Read `/workspace/projects/<id>/docs/tor.md` and the TOR-structure guideline. Do not hardcode gaps for any one project. Find them in the document.
+Start from the approved TOR only. If `load_project` stops, stop. Map what the TOR says onto SRS sections. Do not rewrite the TOR. Do not hardcode gaps for any one project. Find them in the document.
 
 Extract:
 

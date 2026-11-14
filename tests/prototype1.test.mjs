@@ -35,7 +35,7 @@ In scope: tasks for one team. Out of scope: external customer access.
 
 The product shall let a team member add a task with a title.
 
-Source: TOR 3.1
+Source: IS-001
 
 # Nonfunctional Requirements
 
@@ -43,7 +43,7 @@ Source: TOR 3.1
 
 The product shall remain limited to the team.
 
-Source: TOR 3.2
+Source: IS-002
 
 # Acceptance Criteria
 
@@ -58,8 +58,10 @@ Verifies: FR-001
 Implementation details wait for later design.
 `;
 
+const tracedTor = "IS-001 add a task\nIS-002 stay with the team\n";
+
 test("valid SRS passes when the TOR hash matches", () => {
-  const tor = "frozen tor text\n";
+  const tor = tracedTor;
   const result = validateSrs({
     srs: validSrs,
     torText: tor,
@@ -129,8 +131,8 @@ test("TOR path changes, blocking gaps, and unresolved conflicts fail", () => {
 
   const resolved = validateSrs({
     srs: validSrs,
-    torText: tor,
-    expectedTorSha256: sha256(tor),
+    torText: tracedTor,
+    expectedTorSha256: sha256(tracedTor),
     elicitationLog: "## EL-001\n\n- class: conflict\n- resolution: rejected\n",
   });
   assert.equal(resolved.ok, true, resolved.errors.join("\n"));
@@ -372,8 +374,7 @@ function srsInput(stamp = "20261109T201614Z") {
     title: "SRS",
     body: buildSrsPullRequestBody({
       projectId: "task-tracker-lite",
-      baselineId: "TOR-001",
-      gitCommit: "33df89bb531e635f8fea2f751d9559c15c3a4065",
+      mergeCommit: "33df89bb531e635f8fea2f751d9559c15c3a4065",
       sha256: "abc",
       summaryOfDecisions: "Statuses were confirmed.",
     }),

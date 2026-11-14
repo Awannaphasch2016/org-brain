@@ -41,8 +41,7 @@ export function planSrsPullRequest(input: {
 }): { ok: true; paths: string[] } | { ok: false; error: string };
 export function buildSrsPullRequestBody(input: {
   projectId: string;
-  baselineId: string;
-  gitCommit: string | null;
+  mergeCommit: string | null;
   sha256: string;
   summaryOfDecisions: string;
   errors?: readonly string[];
