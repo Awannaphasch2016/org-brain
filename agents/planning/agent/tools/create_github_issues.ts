@@ -1,9 +1,9 @@
 import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
-import { GithubClient, getPullRequestStatus, githubRepoFromEnv } from "../../../../lib/github.mjs";
+import { getPullRequestStatus, githubRepoFromEnv } from "../../../../lib/github.mjs";
 import { planGithubIssueWrites, validateFeatureIssues } from "../../../../lib/issues-validate.mjs";
-import { resolveGithubToken } from "../../../specification/agent/lib/github-token.js";
+import { githubClientFromContext } from "../../../specification/agent/lib/github-token.js";
 
 export default defineTool({
   description:
@@ -22,7 +22,7 @@ export default defineTool({
     const validation = validateFeatureIssues({ issuesMarkdown, architecture });
     if (!validation.ok) throw new Error(validation.errors.join("; "));
     const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({ token: await resolveGithubToken(ctx), owner, repo });
+    const client = await githubClientFromContext(ctx);
     const status = fixture ? { merged: false } : await getPullRequestStatus(client, pullNumber);
     const plan = planGithubIssueWrites({
       fixture: Boolean(fixture),

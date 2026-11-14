@@ -2,13 +2,12 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import {
-  GithubClient,
   getPullRequestStatus,
   githubRepoFromEnv,
   openReviewedPullRequest,
 } from "../../../../lib/github.mjs";
 import { setYamlPath } from "../../../../lib/project-yaml.mjs";
-import { resolveGithubToken } from "../../../specification/agent/lib/github-token.js";
+import { githubClientFromContext } from "../../../specification/agent/lib/github-token.js";
 
 function decodeContent(content: string) {
   return Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
@@ -27,7 +26,7 @@ export default defineTool({
   async execute({ projectId, pullNumber, approvedBy, fixture }, ctx) {
     if (fixture) throw new Error("Refusing to record a baseline from a fixture.");
     const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({ token: await resolveGithubToken(ctx), owner, repo });
+    const client = await githubClientFromContext(ctx);
     const status = await getPullRequestStatus(client, pullNumber);
     if (!status.merged || !status.mergeCommitSha) {
       throw new Error("The architecture pull request is not merged.");

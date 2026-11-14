@@ -5,8 +5,8 @@ import test from "node:test";
 import { authorizeProject, authorizeSlackActor, planLoadProject } from "../lib/authz.mjs";
 import {
   GithubClient,
-  MERGE_FORBIDDEN,
-  assertNotMergeRequest,
+  MERGE_REFUSED,
+  assertMergeAuthorized,
   buildSrsPullRequestBody,
   createSrsPullRequest,
   openBaselinePullRequest,
@@ -179,8 +179,11 @@ test("pull request planning refuses failed validation and the TOR", () => {
   assert.match(tor.error, /frozen TOR/);
 });
 
-test("GitHub client rejects merge and the create flow never calls it", async () => {
-  assert.throws(() => assertNotMergeRequest("PUT", "/repos/o/r/pulls/1/merge"), /never merge/);
+test("GitHub client rejects an unapproved merge and the create flow never calls it", async () => {
+  assert.throws(
+    () => assertMergeAuthorized("PUT", "/repos/o/r/pulls/1/merge", { sha: "abc" }, undefined),
+    new RegExp(MERGE_REFUSED),
+  );
   const harness = githubHarness();
   const client = new GithubClient({
     fetchImpl: harness.fetchImpl,
@@ -190,7 +193,7 @@ test("GitHub client rejects merge and the create flow never calls it", async () 
   });
   await assert.rejects(
     () => client.request("POST", "/repos/o/r/pulls/7/merge", { body: {} }),
-    (error) => error instanceof Error && error.message === MERGE_FORBIDDEN,
+    (error) => error instanceof Error && error.message === MERGE_REFUSED,
   );
   const opened = await createSrsPullRequest(client, srsInput());
   assert.equal(opened.number, 7);

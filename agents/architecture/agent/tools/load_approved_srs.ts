@@ -1,12 +1,12 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { authorizeSlackActor, slackUserIdFromAuth } from "../../../../lib/authz.mjs";
-import { GithubClient, assertInsideProject, githubRepoFromEnv } from "../../../../lib/github.mjs";
+import { assertInsideProject, githubRepoFromEnv } from "../../../../lib/github.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { sha256 } from "../../../../lib/srs-validate.mjs";
 import { resolveStageInput } from "../../../../lib/stage-gate.mjs";
 import { factoryConfig } from "../../../../generated/config.js";
-import { resolveGithubToken } from "../../../specification/agent/lib/github-token.js";
+import { githubClientFromContext } from "../../../specification/agent/lib/github-token.js";
 
 function decodeContent(content: string) {
   return Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
@@ -37,7 +37,7 @@ export default defineTool({
       };
     }
     const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({ token: await resolveGithubToken(ctx), owner, repo });
+    const client = await githubClientFromContext(ctx);
     const repository = await client.request("GET", `/repos/${owner}/${repo}`);
     const ref = repository.default_branch as string;
     const yamlPath = assertInsideProject(projectId, `projects/${projectId}/project.yaml`);

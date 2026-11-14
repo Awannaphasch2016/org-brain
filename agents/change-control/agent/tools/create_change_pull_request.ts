@@ -2,10 +2,10 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { validateChangeReview } from "../../../../lib/change-review.mjs";
-import { GithubClient, githubRepoFromEnv, openReviewedPullRequest } from "../../../../lib/github.mjs";
+import { githubRepoFromEnv, openReviewedPullRequest } from "../../../../lib/github.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { planStagePullRequest } from "../../../../lib/stage-gate.mjs";
-import { resolveGithubToken } from "../../../specification/agent/lib/github-token.js";
+import { githubClientFromContext } from "../../../specification/agent/lib/github-token.js";
 
 export default defineTool({
   description:
@@ -45,7 +45,7 @@ export default defineTool({
     });
     if (!plan.ok) throw new Error(plan.error);
     const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({ token: await resolveGithubToken(ctx), owner, repo });
+    const client = await githubClientFromContext(ctx);
     const repository = await client.request("GET", `/repos/${owner}/${repo}`);
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
     return openReviewedPullRequest(client, {

@@ -1,6 +1,8 @@
 import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { factoryConfig } from "../../../../generated/config.js";
+import { createSlackGate } from "../../../../lib/slack-gate.js";
+import { createGateGithubClient } from "../../../specification/agent/lib/github-token.js";
 
 const THREAD_GUIDANCE =
   "You are continuing an architecture thread. Reply only when the message continues that work. Otherwise call no_reply.";
@@ -15,10 +17,18 @@ function allowChannel(channelId: string | undefined) {
   return allow.length > 0 && Boolean(channelId && allow.includes(channelId));
 }
 
+const gate = createSlackGate({
+  agent: "architecture",
+  allowedUserIds: factoryConfig.allowedUserIds,
+  allowedChannelIds: factoryConfig.allowedChannelIds,
+  createClient: () => createGateGithubClient(),
+});
+
 export default slackChannel({
   credentials: process.env.SLACK_CONNECTOR
     ? connectSlackCredentials(process.env.SLACK_CONNECTOR)
     : undefined,
+  onInteraction: (action, ctx) => gate.onInteraction(action, ctx),
   async onDirectMessage() {
     return null;
   },
@@ -26,6 +36,7 @@ export default slackChannel({
     if (!message.author || message.author.isBot) return null;
     if (message.raw.channel_type === "im") return null;
     if (!allowUser(message.author.userId) || !allowChannel(message.channelId)) return null;
+    if (await gate.consumeReasonReply(ctx, message)) return null;
     if (factoryConfig.status !== "approved") return null;
     const auth = defaultSlackAuth(message, ctx);
     if (!auth) return null;

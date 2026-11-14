@@ -1,6 +1,6 @@
 # wewebplus-software-factory
 
-Six Eve agents, one per Software Factory stage. Each opens a GitHub pull request for a person to review. None of them merge.
+Six Eve agents, one per Software Factory stage. Each opens a GitHub pull request. The model tools never merge. A merge happens only in the Slack gate, and only when a recorded human approval matches that pull request and commit.
 
 | Prototype | Agent | Role |
 | --- | --- | --- |
@@ -22,7 +22,9 @@ The installed Slack app is the Specification Agent. Its public routes are under 
 
 The app manifest is `docs/slack-app-manifest.yaml`. Direct messages are disabled in code. The only allowlisted channel is `C0CG6SG8PNW` and the only allowlisted user is `U0CFRUV378D`. An empty allowlist denies everyone. The channel never uses `{ auth: null }`.
 
-The other agents serve `/eve/architecture/v1/slack`, `/eve/planning/v1/slack`, `/eve/implementation/v1/slack`, `/eve/change-control/v1/slack`, and `/eve/release/v1/slack`. One Slack app has one event URL, so those routes wait on a separate app or a future router. They reuse the same signing secret and allowlist.
+The other agents serve `/eve/architecture/v1/slack`, `/eve/planning/v1/slack`, `/eve/implementation/v1/slack`, `/eve/change-control/v1/slack`, and `/eve/release/v1/slack`. One Slack app has one event URL and one interactivity URL. This repository does not add a shared Slack router. Every agent's channel imports the same gate handler (`lib/slack-gate.ts`), so a click is handled by whichever of those URLs the Slack app currently points at. A single router in front of all six agents is the direction for later work.
+
+Gate buttons are Approve, Reject, and Request revision. Plain code renders only the actions that are valid for the stage. The default approver is Slack user `U0CFRUV378D`. That id is a starting value only: the owner must verify it is Anak's current Slack user id before relying on it. Override it with `FACTORY_GATE_APPROVER_IDS`. An empty approver list allows nobody. A bot or assistant click does not count. Phase 1 TOR uploads, when that flow lands, are text only (`.md` or `.txt`) up to 1 MB. That default is overridable later; this change does not accept PDF or DOCX.
 
 ## Environment
 
@@ -32,9 +34,14 @@ Secrets stay in the host environment. None are required to install, typecheck, v
 | --- | --- |
 | `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` | Portable Slack credentials. Do not set these together with `SLACK_CONNECTOR`. |
 | `SLACK_CONNECTOR` | Vercel Connect Slack connector UID. |
-| `GITHUB_TOKEN` | Fine-grained PAT for the authored GitHub tools. |
-| `GITHUB_CONNECTOR` | Optional GitHub App via Vercel Connect (`principalType: "app"`). Used instead of the PAT when set. |
-| `GITHUB_REPOSITORY` | `owner/repo`. Defaults to `Awannaphasch2016/wewebplus-software-factory`. |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID` | Preferred GitHub identity. Our GitHub App. The private key is a PEM and stays in the host environment. All three are required together. |
+| `GITHUB_CONNECTOR` | Optional GitHub App via Vercel Connect (`principalType: "app"`). Used when the app env above is not set. |
+| `GITHUB_TOKEN` | Personal-token fallback for the authored GitHub tools. It remains until the GitHub App is verified. |
+| `FACTORY_REQUIRE_APP` | Set to `1` to refuse the personal-token fallback. |
+| `FACTORY_GATE_APPROVER_IDS` | Comma-separated human Slack user ids (`U…`) allowed to approve. Unset uses `U0CFRUV378D`, which the owner must verify. An empty or invalid list allows nobody. |
+| `FACTORY_GATE_DENY_SLACK_IDS` | Slack user ids that never count, even if they are also listed as approvers. |
+| `FACTORY_REQUIRED_CHECK` | Exact GitHub check name that must be green before a merge. Unset pins `check`. Every check run on that commit must be completed and successful. |
+| `GITHUB_REPOSITORY` | Required `owner/repo`. The tools refuse to guess. This repository is `Awannaphasch2016/org-brain`. |
 | `SPECIFICATION_AGENT_MODEL` | Model override for the Specification Agent. Default `anthropic/claude-opus-5.5`. Architecture, planning, implementation, change control, and release fall back to this value unless `ARCHITECTURE_AGENT_MODEL`, `PLANNING_AGENT_MODEL`, `IMPLEMENTATION_AGENT_MODEL`, `CHANGE_CONTROL_AGENT_MODEL`, or `RELEASE_AGENT_MODEL` is set. |
 | `VERCEL_OIDC_TOKEN`, team id, project id | Sandbox and AI Gateway. Supplied on Vercel. |
 
