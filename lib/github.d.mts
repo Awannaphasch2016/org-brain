@@ -102,6 +102,7 @@ export function humanCommitsSince(
   options?: { botLogin?: string | null; afterSha?: string | null },
 ): { sha: string; summary: string; files: readonly { filename: string; additions?: number; deletions?: number }[]; additions: number; deletions: number }[];
 export function getCombinedStatus(client: GithubClient, sha: string): Promise<{ state: string; checkRuns: { name: string; status: string; conclusion: string | null }[] }>;
+export function readRepoBytes(client: GithubClient, filePath: string, ref: string): Promise<Buffer | null>;
 export function readRepoTextFile(client: GithubClient, filePath: string, ref: string): Promise<string | null>;
 export function mergeApprovedPullRequest(
   client: GithubClient,
@@ -127,11 +128,45 @@ export function openBaselinePullRequest(
   client: GithubClient,
   input: {
     projectId: string;
+    block?: "tor" | "srs" | "architecture" | string;
     baseBranch: string;
     stamp: string;
     merged: boolean;
     mergeCommitSha: string | null;
+    headRef: string | null;
+    sourcePr: number;
+    sourceHeadSha: string;
     projectYamlPath: string;
     projectYaml: string;
   },
-): Promise<{ url: string; number: number; branch: string; headSha: string }>;
+): Promise<{
+  url: string;
+  number: number;
+  branch: string;
+  headSha: string;
+  reference: Record<string, unknown>;
+  projectYaml: string;
+}>;
+
+export function recordApprovedBaseline(
+  client: GithubClient,
+  input: {
+    projectId: string;
+    block: string;
+    pullNumber: number;
+    stamp: string;
+    allowedUserIds: readonly string[];
+    signingSecret?: string;
+    baseBranch?: string;
+  },
+): Promise<{
+  url: string;
+  number: number;
+  branch: string;
+  headSha: string;
+  reference: Record<string, unknown>;
+  projectYaml: string;
+  approvedBy: string;
+  approvedAt: string;
+  sha256: string;
+}>;

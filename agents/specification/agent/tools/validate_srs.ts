@@ -1,5 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
+import { readTorBaselineSha256 } from "../../../../lib/baseline.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { validateSrs } from "../../../../lib/srs-validate.mjs";
 import { assessWrite } from "../../../../lib/write-policy.mjs";
@@ -28,13 +29,22 @@ export default defineTool({
     const projectYaml = await sandbox.readTextFile({ path: `${root}/project.yaml` });
     if (!projectYaml) throw new Error(`Missing ${root}/project.yaml`);
     const project = parseSimpleYaml(projectYaml);
-    const torPath = `${root}/${project.tor.path}`;
+    const baseline = readTorBaselineSha256(project);
+    if (!baseline.ok || !baseline.sha256 || !baseline.path) {
+      return {
+        ok: false,
+        errors: [`project.yaml is not the new format: ${baseline.reason ?? "tor.baseline.sha256 is missing"}`],
+        warnings: [],
+        reportPath: null,
+      };
+    }
+    const torPath = `${root}/${baseline.path}`;
     const torText = await sandbox.readTextFile({ path: torPath });
     if (!torText) throw new Error(`Missing frozen TOR at ${torPath}`);
     const result = validateSrs({
       srs: await readOptional(sandbox, `${root}/docs/srs.md`),
       torText,
-      expectedTorSha256: project.tor.sha256,
+      expectedTorSha256: baseline.sha256,
       elicitationLog: await readOptional(sandbox, `${root}/docs/elicitation-log.md`),
       analysis: await readOptional(sandbox, `${root}/docs/_analysis.md`),
       changedPaths: changedPaths ?? [],
