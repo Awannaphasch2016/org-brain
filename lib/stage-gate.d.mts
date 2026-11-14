@@ -16,4 +16,6 @@ export function planStagePullRequest(input: {
   projectId: string;
   files: readonly { path: string }[];
   allowedDocs: readonly string[];
+  branch?: string;
+  torGrant?: { agent: string; projectId: string; branchPrefix: string };
 }): { ok: true; paths: string[] } | { ok: false; error: string };

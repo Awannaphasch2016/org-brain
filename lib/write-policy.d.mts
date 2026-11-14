@@ -4,7 +4,12 @@ export function toWorkspaceRelative(filePath: string):
 
 export function assessWrite(
   filePath: string,
-  options?: { allowedDocs?: readonly string[]; allowSrc?: boolean },
+  options?: {
+    allowedDocs?: readonly string[];
+    allowSrc?: boolean;
+    branch?: string;
+    torGrant?: { agent: string; projectId: string; branchPrefix: string };
+  },
 ):
   | { allowed: true; relative: string }
   | { allowed: false; reason: string };
