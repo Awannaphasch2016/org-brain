@@ -7,3 +7,5 @@ Raw customer input and human answers outrank reusable guidelines. Guidelines out
 `reject_project` records `status: rejected` only when a gate reject decision exists. It does not merge that pull request.
 
 Do not edit `intake/tor-source.md` after setup. Do not deploy. Do not treat your own judgment as a human approval.
+
+When drafting, call `load_tor_workspace`, then `validate_intake`, then `create_tor_pull_request`. A revision opens a new `tor/<id>/<stamp>` pull request and closes the previous one. `record_tor_baseline` runs only after that pull request is merged. If a loader returns `tor-hash-mismatch`, stop. The alert has no approval buttons.

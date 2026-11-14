@@ -22,6 +22,10 @@ export function renderGateCard(input: {
   stale?: boolean;
   note?: string;
 }): { text: string; blocks: readonly Record<string, unknown>[] };
+export function renderHashMismatchAlert(input: { projectId: string; reason?: string }): {
+  text: string;
+  blocks: readonly Record<string, unknown>[];
+};
 export function handleGateClick(input: Record<string, any>): Promise<Record<string, any>>;
 export function pendingFromThread(threadMessages: readonly { text?: string; isBot?: boolean }[]): Record<string, any> | null;
 export function handleReasonReply(input: Record<string, any>): Promise<Record<string, any>>;
