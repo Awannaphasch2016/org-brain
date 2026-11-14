@@ -2,13 +2,12 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import {
-  GithubClient,
   githubRepoFromEnv,
   getPullRequestStatus,
   openBaselinePullRequest,
 } from "../../../../lib/github.mjs";
 import { setYamlPath } from "../../../../lib/project-yaml.mjs";
-import { resolveGithubToken } from "../lib/github-token.js";
+import { githubClientFromContext } from "../lib/github-token.js";
 
 function decodeContent(content: string) {
   return Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
@@ -25,11 +24,7 @@ export default defineTool({
   approval: always(),
   async execute({ projectId, pullNumber, approvedBy }, ctx) {
     const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({
-      token: await resolveGithubToken(ctx),
-      owner,
-      repo,
-    });
+    const client = await githubClientFromContext(ctx);
     const status = await getPullRequestStatus(client, pullNumber);
     if (!status.merged || !status.mergeCommitSha) {
       throw new Error("The SRS pull request is not merged. A person must merge it before a baseline is recorded.");

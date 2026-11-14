@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { GithubClient, getPullRequestStatus, githubRepoFromEnv } from "../../../../lib/github.mjs";
-import { resolveGithubToken } from "../lib/github-token.js";
+import { getPullRequestStatus } from "../../../../lib/github.mjs";
+import { githubClientFromContext } from "../lib/github-token.js";
 
 export default defineTool({
   description:
@@ -10,12 +10,7 @@ export default defineTool({
     pullNumber: z.number().int().positive(),
   }),
   async execute({ pullNumber }, ctx) {
-    const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({
-      token: await resolveGithubToken(ctx),
-      owner,
-      repo,
-    });
+    const client = await githubClientFromContext(ctx);
     return getPullRequestStatus(client, pullNumber);
   },
 });

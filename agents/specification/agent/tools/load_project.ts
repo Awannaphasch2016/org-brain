@@ -6,14 +6,13 @@ import {
   slackUserIdFromAuth,
 } from "../../../../lib/authz.mjs";
 import {
-  GithubClient,
   assertInsideProject,
   githubRepoFromEnv,
 } from "../../../../lib/github.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { sha256 } from "../../../../lib/srs-validate.mjs";
 import { specificationConfig } from "../../../../generated/config.js";
-import { resolveGithubToken } from "../lib/github-token.js";
+import { githubClientFromContext } from "../lib/github-token.js";
 
 function decodeContent(content: string) {
   return Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
@@ -36,11 +35,7 @@ export default defineTool({
     }
 
     const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({
-      token: await resolveGithubToken(ctx),
-      owner,
-      repo,
-    });
+    const client = await githubClientFromContext(ctx);
     const repository = await client.request("GET", `/repos/${owner}/${repo}`);
     const ref = repository.default_branch as string;
     const projectYamlPath = assertInsideProject(projectId, `projects/${projectId}/project.yaml`);

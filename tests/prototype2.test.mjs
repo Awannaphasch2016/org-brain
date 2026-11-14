@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, access } from "node:fs/promises";
 import test from "node:test";
 import { validateArchitecture } from "../lib/architecture-validate.mjs";
-import { MERGE_FORBIDDEN, assertNotMergeRequest } from "../lib/github.mjs";
+import { MERGE_REFUSED, assertMergeAuthorized } from "../lib/github.mjs";
 import { planStagePullRequest, resolveStageInput } from "../lib/stage-gate.mjs";
 import { assessWrite } from "../lib/write-policy.mjs";
 
@@ -57,5 +57,8 @@ test("architecture writes stay off the TOR and the factory slot is empty", async
   await assert.rejects(access(new URL("agents/factory/agent/agent.ts", root)));
   const slack = await read("agents/architecture/agent/channels/slack.ts");
   assert.equal(slack.includes("auth: null"), false);
-  assert.throws(() => assertNotMergeRequest("PUT", "/repos/o/r/pulls/3/merge"), new RegExp(MERGE_FORBIDDEN));
+  assert.throws(
+    () => assertMergeAuthorized("PUT", "/repos/o/r/pulls/3/merge", undefined, undefined),
+    new RegExp(MERGE_REFUSED),
+  );
 });

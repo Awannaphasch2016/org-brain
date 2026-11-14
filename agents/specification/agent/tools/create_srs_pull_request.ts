@@ -2,14 +2,13 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import {
-  GithubClient,
   buildSrsPullRequestBody,
   createSrsPullRequest,
   githubRepoFromEnv,
 } from "../../../../lib/github.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { validateSrs } from "../../../../lib/srs-validate.mjs";
-import { resolveGithubToken } from "../lib/github-token.js";
+import { githubClientFromContext } from "../lib/github-token.js";
 
 async function readOptional(
   sandbox: { readTextFile: (input: { path: string }) => PromiseLike<string | null> },
@@ -66,11 +65,7 @@ export default defineTool({
       files.push({ path: `${root}/docs/_analysis.md`, content: analysis });
     }
     const { owner, repo } = githubRepoFromEnv();
-    const client = new GithubClient({
-      token: await resolveGithubToken(ctx),
-      owner,
-      repo,
-    });
+    const client = await githubClientFromContext(ctx);
     const repository = await client.request("GET", `/repos/${owner}/${repo}`);
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
     const opened = await createSrsPullRequest(client, {
