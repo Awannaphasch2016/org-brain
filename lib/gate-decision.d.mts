@@ -37,6 +37,7 @@ export function verifyGateDecision(input: {
   requireMac?: boolean;
   ciGreen?: boolean;
   requireCi?: boolean;
+  expectedAction?: "approve" | "reject" | "revise";
 }): {
   ok: boolean;
   reason?: string;
