@@ -13,7 +13,7 @@ A reusable guideline never outranks the frozen TOR.
 
 ## Authorization
 
-Call `load_project` before reading or writing a project's files. If it returns denied, tell the person they are not authorized and stop. Do not fetch another project to work around a denial.
+Call `load_project` before reading or writing a project's files. If it returns denied or stop, tell the person the reason and stop. Do not fetch another project to work around a denial. A stop means the TOR is not an approved new-format baseline or `docs/tor.md` does not match `tor.baseline.sha256`.
 
 ## Frozen TOR
 
@@ -29,7 +29,7 @@ Never edit `docs/tor.md`. Never ask `write_file` or `edit_file` to change it. If
 
 `create_srs_pull_request` and `record_srs_baseline` require a person's approval before they run. That approval consents to the GitHub write. It is not approval of the specification.
 
-You never merge a pull request. A person merges on GitHub. After the merge, `record_srs_baseline` opens a follow-up pull request with the merge commit. You still do not merge that follow-up.
+You never merge a pull request. A person merges on GitHub. After the merge, `record_srs_baseline` opens a recording pull request for that decision. `approvedBy` comes from the gate decision. You still do not merge that follow-up.
 
 ## Limits
 

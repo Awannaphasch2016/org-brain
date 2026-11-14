@@ -1,31 +1,19 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { authorizeSlackActor, slackUserIdFromAuth } from "../../../../lib/authz.mjs";
-import { assertInsideProject, githubRepoFromEnv } from "../../../../lib/github.mjs";
-import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
-import { sha256 } from "../../../../lib/srs-validate.mjs";
+import { slackUserIdFromAuth } from "../../../../lib/authz.mjs";
+import { loadApprovedSrs } from "../../../../lib/project-files.mjs";
 import { resolveStageInput } from "../../../../lib/stage-gate.mjs";
 import { factoryConfig } from "../../../../generated/config.js";
 import { githubClientFromContext } from "../../../specification/agent/lib/github-token.js";
 
-function decodeContent(content: string) {
-  return Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
-}
-
 export default defineTool({
   description:
-    "Authorize the Slack user and load an approved SRS baseline, or acknowledge a fixture without treating it as a baseline.",
+    "Authorize the Slack user and load an approved SRS at its baseline commit, or acknowledge a fixture without treating it as a baseline. A hash mismatch stops the load.",
   inputSchema: z.object({
     projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     fixtureId: z.string().optional(),
   }),
   async execute({ projectId, fixtureId }, ctx) {
-    const userId = slackUserIdFromAuth(ctx.session.auth.current);
-    const actor = authorizeSlackActor({
-      userId,
-      allowedUserIds: factoryConfig.allowedUserIds,
-    });
-    if (!actor.allowed) return { denied: true, fetch: false, reason: actor.reason };
     if (fixtureId) {
       const input = resolveStageInput({ fixtureId, previousBaselineApproved: false });
       return {
@@ -36,35 +24,34 @@ export default defineTool({
         root: input.root,
       };
     }
-    const { owner, repo } = githubRepoFromEnv();
     const client = await githubClientFromContext(ctx);
-    const repository = await client.request("GET", `/repos/${owner}/${repo}`);
-    const ref = repository.default_branch as string;
-    const yamlPath = assertInsideProject(projectId, `projects/${projectId}/project.yaml`);
-    const yamlPayload = await client.request(
-      "GET",
-      `/repos/${owner}/${repo}/contents/${yamlPath}?ref=${encodeURIComponent(ref)}`,
-    );
-    const project = parseSimpleYaml(decodeContent(yamlPayload.content));
-    const approved = project.srs?.status === "approved" && Boolean(project.srs?.baseline?.mergeCommit);
-    const gate = resolveStageInput({ previousBaselineApproved: approved });
-    if (gate.denied) return { denied: true, fetch: false, reason: gate.reason };
-    const srsPath = assertInsideProject(projectId, `projects/${projectId}/${project.srs.path}`);
-    const srsPayload = await client.request(
-      "GET",
-      `/repos/${owner}/${repo}/contents/${srsPath}?ref=${encodeURIComponent(ref)}`,
-    );
-    const srs = decodeContent(srsPayload.content);
+    const loaded = await loadApprovedSrs(client, {
+      projectId,
+      userId: slackUserIdFromAuth(ctx.session.auth.current),
+      allowedUserIds: factoryConfig.allowedUserIds,
+    });
+    if (loaded.denied || loaded.stop || !loaded.projectYaml || !loaded.documentText || !loaded.documentPath) {
+      return {
+        denied: loaded.denied,
+        fetch: false,
+        stop: true,
+        fixture: false,
+        recordBaseline: false,
+        reason: loaded.reason,
+      };
+    }
     const sandbox = await ctx.getSandbox();
-    await sandbox.writeTextFile({ path: yamlPath, content: decodeContent(yamlPayload.content) });
-    await sandbox.writeTextFile({ path: srsPath, content: srs });
+    const yamlPath = `projects/${projectId}/project.yaml`;
+    await sandbox.writeTextFile({ path: yamlPath, content: loaded.projectYaml });
+    await sandbox.writeTextFile({ path: loaded.documentPath, content: loaded.documentText });
     return {
       denied: false,
       fetch: true,
+      stop: false,
       fixture: false,
       recordBaseline: true,
-      srsSha256: sha256(srs),
-      srsBaseline: project.srs.baseline.mergeCommit,
+      srsSha256: loaded.sha256,
+      srsBaseline: loaded.mergeCommit,
     };
   },
 });

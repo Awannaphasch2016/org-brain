@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { authorizeProject, authorizeSlackActor, planLoadProject } from "../lib/authz.mjs";
+import { assessProjectFormat } from "../lib/baseline.mjs";
 import {
   GithubClient,
   MERGE_REFUSED,
@@ -13,7 +14,7 @@ import {
   openReviewedPullRequest,
   planSrsPullRequest,
 } from "../lib/github.mjs";
-import { parseSimpleYaml, setYamlPath } from "../lib/project-yaml.mjs";
+import { parseSimpleYaml } from "../lib/project-yaml.mjs";
 import { sha256, validateSrs } from "../lib/srs-validate.mjs";
 import { assessWrite } from "../lib/write-policy.mjs";
 
@@ -300,10 +301,14 @@ test("reviewed and baseline pull requests update an existing project file withou
   assert.equal(harness.calls.length, 0);
   const opened = await openBaselinePullRequest(client, {
     projectId: "task-tracker-lite",
+    block: "srs",
     baseBranch: "main",
     stamp: "20261110T050000Z",
     merged: true,
-    mergeCommitSha: "mergedsha",
+    mergeCommitSha: "b".repeat(40),
+    headRef: "spec/task-tracker-lite/srs/20261110T045607Z",
+    sourcePr: 9,
+    sourceHeadSha: "a".repeat(40),
     projectYamlPath: projectPath,
     projectYaml: "id: task-tracker-lite\n",
   });
@@ -316,7 +321,7 @@ test("reviewed and baseline pull requests update an existing project file withou
   assert.equal(harness.state.baseSha, "abc123");
 });
 
-test("project.yaml hash matches the frozen TOR and baseline fields can be recorded", async () => {
+test("task-tracker-lite keeps the retired TOR block and the new format refuses it", async () => {
   const tor = await readRepo("projects/task-tracker-lite/docs/tor.md");
   const yaml = await readRepo("projects/task-tracker-lite/project.yaml");
   const project = parseSimpleYaml(yaml);
@@ -325,15 +330,13 @@ test("project.yaml hash matches the frozen TOR and baseline fields can be record
   assert.equal(project.tor.sha256, sha256(tor));
   assert.equal(project.authorization.allowedSlackUserIds[0], "U0CFRUV378D");
   assert.ok(tor.includes("External customer access"));
-  const updated = setYamlPath(
-    setYamlPath(yaml, "srs.status", "approved"),
-    "srs.baseline.mergeCommit",
-    "abc123",
-  );
-  const parsed = parseSimpleYaml(updated);
-  assert.equal(parsed.srs.status, "approved");
-  assert.equal(parsed.srs.baseline.mergeCommit, "abc123");
-  assert.equal(parsed.tor.sha256, project.tor.sha256);
+  const assessed = assessProjectFormat(project);
+  assert.equal(assessed.ok, false);
+  assert.equal(assessed.reason, "old-format");
+  const fixture = parseSimpleYaml(await readRepo("fixtures/test/p1-new-format/project.yaml"));
+  assert.equal(assessProjectFormat(fixture).ok, true);
+  assert.equal(fixture.tor.status, "approved");
+  assert.equal(fixture.tor.baseline.sha256, sha256(await readRepo("fixtures/test/p1-new-format/docs/tor.md")));
 });
 
 test("guidelines stay project-agnostic and channel files fail closed", async () => {

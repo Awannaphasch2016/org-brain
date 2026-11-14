@@ -1,0 +1,38 @@
+id: p1-new-format
+title: New format fixture
+status: active
+tor:
+  path: docs/tor.md
+  status: approved
+  pullRequest: 3
+  branch: null
+  baseline:
+    mergeCommit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    approvedAt: "2026-11-14T08:00:00.000Z"
+    approvedBy: "slack:T0TEAM:U0CFRUV378D"
+    sha256: 35121d55f8985c22d355e53725154c5513d775b112f35b098b8f800c9d33457e
+srs:
+  path: docs/srs.md
+  status: approved
+  pullRequest: 4
+  branch: null
+  baseline:
+    mergeCommit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    approvedAt: "2026-11-14T09:00:00.000Z"
+    approvedBy: "slack:T0TEAM:U0CFRUV378D"
+    sha256: 1f60c020bfc4ab9c754b1621ae18d8198afb98c400f33a76ac67630b0a7b9b55
+    sourceTorCommit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+architecture:
+  path: docs/architecture.md
+  status: none
+  pullRequest: null
+  branch: null
+  baseline:
+    mergeCommit: null
+    approvedAt: null
+    approvedBy: null
+    sha256: null
+    sourceSrsCommit: null
+authorization:
+  allowedSlackUserIds:
+    - U0CFRUV378D

@@ -6,6 +6,7 @@ import {
   createSrsPullRequest,
   githubRepoFromEnv,
 } from "../../../../lib/github.mjs";
+import { readTorBaselineSha256 } from "../../../../lib/baseline.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { validateSrs } from "../../../../lib/srs-validate.mjs";
 import { githubClientFromContext } from "../lib/github-token.js";
@@ -36,7 +37,11 @@ export default defineTool({
     const projectYaml = await sandbox.readTextFile({ path: `${root}/project.yaml` });
     if (!projectYaml) throw new Error(`Missing ${root}/project.yaml`);
     const project = parseSimpleYaml(projectYaml);
-    const torText = await sandbox.readTextFile({ path: `${root}/${project.tor.path}` });
+    const baseline = readTorBaselineSha256(project);
+    if (!baseline.ok || !baseline.sha256 || !baseline.path) {
+      throw new Error(`project.yaml is not the new format: ${baseline.reason ?? "tor.baseline.sha256 is missing"}`);
+    }
+    const torText = await sandbox.readTextFile({ path: `${root}/${baseline.path}` });
     if (!torText) throw new Error("Missing frozen TOR");
     const srs = await readOptional(sandbox, `${root}/docs/srs.md`);
     const elicitationLog = await readOptional(sandbox, `${root}/docs/elicitation-log.md`);
@@ -44,7 +49,7 @@ export default defineTool({
     const validation = validateSrs({
       srs,
       torText,
-      expectedTorSha256: project.tor.sha256,
+      expectedTorSha256: baseline.sha256,
       elicitationLog,
       analysis,
       changedPaths: [],
@@ -77,9 +82,9 @@ export default defineTool({
       files,
       body: buildSrsPullRequestBody({
         projectId,
-        baselineId: project.tor.baselineId,
-        gitCommit: project.tor.gitCommit,
-        sha256: project.tor.sha256,
+        baselineId: baseline.mergeCommit ?? "unrecorded",
+        gitCommit: baseline.mergeCommit ?? null,
+        sha256: baseline.sha256,
         summaryOfDecisions,
         warnings: validation.warnings,
       }),
