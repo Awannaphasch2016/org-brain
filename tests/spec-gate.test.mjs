@@ -246,8 +246,8 @@ test("the review-flag recording path cannot change other SRS fields", () => {
 });
 
 test("task-tracker-lite is refused", async () => {
-  const yaml = parseSimpleYaml(await read("projects/task-tracker-lite/project.yaml"));
-  const text = await read("projects/task-tracker-lite/docs/tor.md");
+  const yaml = parseSimpleYaml(await read("fixtures/test/task-tracker-lite/project.yaml"));
+  const text = await read("fixtures/test/task-tracker-lite/docs/tor.md");
   const gate = assessSrsGate({ project: yaml, torText: text });
   assert.equal(gate.ok, false);
   assert.equal(gate.reason, "old-format");

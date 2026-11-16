@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { assessProjectFormat } from "../lib/baseline.mjs";
 import { buildDecision, renderDecisionComment } from "../lib/gate-decision.mjs";
 import { GithubClient, openReviewedPullRequest } from "../lib/github.mjs";
-import { parseSimpleYaml } from "../lib/project-yaml.mjs";
+import { ensureSrsPlanFields, ensureSrsReviewFields, EMPTY_PROJECT_PLAN_BLOCK, flagSrsForNewPlan } from "../lib/plan-yaml.mjs";
+import { parseSimpleYaml, setYamlPath } from "../lib/project-yaml.mjs";
+import { recordingYamlIssue } from "../lib/recording-pr.mjs";
 import {
   assessTorUpload,
   closeSetupProject,
@@ -73,6 +76,154 @@ test("starter yaml parses and contains every key setYamlPath needs", () => {
   assert.equal(written.srs.baseline.sourceTorCommit, "value");
   assert.equal(written.architecture.baseline.sourceSrsCommit, "value");
   assert.equal(written.intake.setupPullRequest, 1);
+  assert.equal(written.projectPlan.baseline.sourceTorCommit, "value");
+  assert.equal(written.srs.review.required, "value");
+  assert.equal(written.planning.baseline.sourceArchCommit, "value");
+  assert.equal(written.implementation.baseline.approvedBy, "value");
+  assert.equal(written.release.deployed, "value");
+});
+
+test("starter contains every document block in the empty state", () => {
+  const sourceSha256 = "ab".repeat(32);
+  const uploadedAt = "2026-11-14T09:00:00.000Z";
+  const yaml = renderStarterProjectYaml({
+    id: "demo",
+    title: "Demo",
+    uploader: UPLOADER,
+    uploadedAt,
+    slackFileId: "F123",
+    sourceSha256,
+    mediaType: "text/markdown",
+  });
+  assert.equal(/[{}\[\]]/.test(yaml), false);
+  const planStart = yaml.indexOf("projectPlan:");
+  assert.equal(yaml.slice(planStart, yaml.indexOf("srs:")), EMPTY_PROJECT_PLAN_BLOCK);
+  const parsed = parseSimpleYaml(yaml);
+  assert.deepEqual(Object.keys(parsed), [
+    "id",
+    "title",
+    "status",
+    "intake",
+    "tor",
+    "projectPlan",
+    "srs",
+    "architecture",
+    "planning",
+    "implementation",
+    "release",
+    "authorization",
+  ]);
+  assert.deepEqual(parsed, {
+    id: "demo",
+    title: "Demo",
+    status: "active",
+    intake: {
+      source: {
+        path: "intake/tor-source.md",
+        sha256: sourceSha256,
+        mediaType: "text/markdown",
+        uploadedBy: UPLOADER,
+        uploadedAt,
+        slackFileId: "F123",
+      },
+      setupPullRequest: null,
+    },
+    tor: {
+      path: "docs/tor.md",
+      status: "none",
+      pullRequest: null,
+      branch: null,
+      baseline: { mergeCommit: null, approvedAt: null, approvedBy: null, sha256: null },
+    },
+    projectPlan: {
+      path: "docs/project-plan.md",
+      status: "none",
+      pullRequest: null,
+      branch: null,
+      baseline: {
+        mergeCommit: null,
+        approvedAt: null,
+        approvedBy: null,
+        sha256: null,
+        sourceTorCommit: null,
+      },
+    },
+    srs: {
+      path: "docs/srs.md",
+      status: "none",
+      pullRequest: null,
+      branch: null,
+      baseline: {
+        mergeCommit: null,
+        approvedAt: null,
+        approvedBy: null,
+        sha256: null,
+        sourceTorCommit: null,
+        sourcePlanCommit: null,
+        sourcePlanSha256: null,
+      },
+      review: {
+        required: false,
+        reason: null,
+        flaggedAt: null,
+        previousSourcePlanCommit: null,
+        newPlanCommit: null,
+      },
+    },
+    architecture: {
+      path: "docs/architecture.md",
+      status: "none",
+      pullRequest: null,
+      branch: null,
+      baseline: {
+        mergeCommit: null,
+        approvedAt: null,
+        approvedBy: null,
+        sha256: null,
+        sourceSrsCommit: null,
+      },
+    },
+    planning: {
+      path: "docs/feature-issues.md",
+      status: "none",
+      pullRequest: null,
+      branch: null,
+      baseline: {
+        mergeCommit: null,
+        approvedAt: null,
+        approvedBy: null,
+        sha256: null,
+        sourceArchCommit: null,
+      },
+    },
+    implementation: {
+      status: "none",
+      pullRequest: null,
+      branch: null,
+      baseline: { mergeCommit: null, approvedAt: null, approvedBy: null },
+    },
+    release: {
+      path: "docs/release-verification.md",
+      status: "none",
+      pullRequest: null,
+      branch: null,
+      deployed: false,
+      baseline: { mergeCommit: null, approvedAt: null, approvedBy: null },
+    },
+    authorization: { allowedSlackUserIds: [ANAK] },
+  });
+  assert.equal(recordingYamlIssue(yaml), null);
+  assert.equal(assessProjectFormat(parsed).ok, true);
+  assert.equal(ensureSrsPlanFields(yaml), yaml);
+  assert.equal(ensureSrsReviewFields(yaml), yaml);
+  const approved = setYamlPath(yaml, "srs.status", "approved");
+  const flagged = flagSrsForNewPlan(approved, {
+    newPlanCommit: "a".repeat(40),
+    flaggedAt: "2026-11-16T00:00:00.000Z",
+  });
+  assert.equal(flagged.flagged, true);
+  assert.equal(flagged.yaml.split("\n").length, approved.split("\n").length);
+  assert.equal(parseSimpleYaml(flagged.yaml).srs.review.newPlanCommit, "a".repeat(40));
 });
 
 test("setup reads Slack attachment bytes and refuses a path outside the attachment store", () => {
@@ -113,6 +264,25 @@ test("uploader not in allowlist refused", async () => {
     /allowlist/,
   );
   assert.equal(fetched, false);
+});
+
+test("the retired project directory is gone and task-tracker-lite can be created", async () => {
+  assert.equal(existsSync("projects/task-tracker-lite"), false);
+  const harness = setupClient();
+  const opened = await createProjectSetup(harness.client, setupInput({ projectId: "task-tracker-lite" }));
+  assert.equal(opened.branch, `setup/task-tracker-lite/${STAMP}`);
+  assert.equal(opened.merged, false);
+  const tree = harness.state.trees[0].tree.map((entry) => entry.path).sort();
+  assert.deepEqual(tree, [
+    "projects/task-tracker-lite/intake/tor-source.md",
+    "projects/task-tracker-lite/project.yaml",
+  ]);
+  assert.match(harness.state.pulls[0].body, /project\.yaml/);
+  assert.match(harness.state.pulls[0].body, /intake\/tor-source\.md/);
+  assert.match(harness.state.pulls[0].body, /Nothing is merged by the agent/);
+  const actions = opened.card.blocks.find((block) => block.type === "actions").elements.map((element) => element.action_id);
+  assert.deepEqual(actions, ["gate:approve", "gate:reject"]);
+  assert.match(opened.card.blocks[0].text.text, /Gate setup/);
 });
 
 test("setup PR contains exactly two paths", async () => {
@@ -233,7 +403,7 @@ function decisionComment(action) {
 }
 
 function setupClient({ directory = false, refs = [], files = {} } = {}) {
-  const state = { trees: [], merges: [], closes: 0, blobs: [] };
+  const state = { trees: [], merges: [], closes: 0, blobs: [], pulls: [] };
   const fetchImpl = async (url, init = {}) => {
     const method = String(init.method ?? "GET").toUpperCase();
     const parsed = new URL(url);
@@ -274,6 +444,7 @@ function setupClient({ directory = false, refs = [], files = {} } = {}) {
     if (method === "POST" && pathname.endsWith("/git/commits")) return http({ sha: "d".repeat(40) });
     if (method === "PATCH" && pathname.includes("/git/refs/heads/")) return http({ object: { sha: body.sha } });
     if (method === "POST" && pathname.endsWith("/pulls")) {
+      state.pulls.push(body);
       return http({ html_url: "https://github.com/o/r/pull/4", number: 4, head: { sha: "d".repeat(40) } });
     }
     if (method === "GET" && /\/pulls\/\d+$/.test(pathname)) {
