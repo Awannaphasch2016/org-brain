@@ -1,5 +1,4 @@
 import { defineTool } from "eve/tools";
-import { always } from "eve/tools/approval";
 import { z } from "zod";
 import {
   buildSrsPullRequestBody,
@@ -7,6 +6,7 @@ import {
   githubRepoFromEnv,
 } from "../../../../lib/github.mjs";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
+import { postSrsGateCard, renderSrsGateCard, renderSrsGateNote } from "../../../../lib/srs-gate.mjs";
 import { assessPhase3Gate, sha256, validateSrs } from "../../../../lib/srs-validate.mjs";
 import { githubClientFromContext } from "../lib/github-token.js";
 
@@ -28,9 +28,9 @@ export default defineTool({
     projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     title: z.string().optional(),
     summaryOfDecisions: z.string().min(1),
+    supersededPullNumber: z.number().int().positive().optional(),
   }),
-  approval: always(),
-  async execute({ projectId, title, summaryOfDecisions }, ctx) {
+  async execute({ projectId, title, summaryOfDecisions, supersededPullNumber }, ctx) {
     const sandbox = await ctx.getSandbox();
     const root = `projects/${projectId}`;
     const projectYaml = await sandbox.readTextFile({ path: `${root}/project.yaml` });
@@ -79,6 +79,7 @@ export default defineTool({
       title,
       stamp,
       validationOk: true,
+      supersededPullNumber,
       files,
       body: buildSrsPullRequestBody({
         projectId,
@@ -88,6 +89,27 @@ export default defineTool({
         warnings: validation.warnings,
       }),
     });
-    return opened;
+    const note = renderSrsGateNote({
+      srs,
+      torText: torText ?? "",
+      validationOk: validation.ok,
+      url: opened.url,
+    });
+    const card = renderSrsGateCard({
+      projectId,
+      repo: `${owner}/${repo}`,
+      pr: opened.number,
+      headSha: opened.headSha,
+      note,
+    });
+    const slack = (ctx as { slack?: { request?: Function; channelId?: string; threadTs?: string }; session?: { slack?: { request?: Function; channelId?: string; threadTs?: string } } }).slack
+      ?? (ctx as { session?: { slack?: { request?: Function; channelId?: string; threadTs?: string } } }).session?.slack;
+    if (slack?.request && slack.channelId) {
+      await postSrsGateCard(
+        { request: slack.request, channelId: slack.channelId, threadTs: slack.threadTs },
+        card as { text: string; blocks?: readonly Record<string, unknown>[] },
+      );
+    }
+    return { ...opened, card };
   },
 });

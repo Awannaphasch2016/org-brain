@@ -4,6 +4,8 @@ import { specificationConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
 import { createGateGithubClient } from "../lib/github-token.js";
 
+export { postSrsGateCard } from "../../../../lib/srs-gate.mjs";
+
 const THREAD_GUIDANCE =
   "You are continuing an existing specification thread. The message does not mention you. " +
   "Reply only when it continues the specification work. Otherwise call no_reply.";

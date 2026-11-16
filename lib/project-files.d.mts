@@ -84,6 +84,11 @@ export function loadApprovedSrs(
   },
 ): Promise<ProjectLoad>;
 
+export function writeLoadedFiles(
+  sandbox: { readTextFile(input: { path: string }): PromiseLike<string | null>; writeTextFile(input: { path: string; content: string }): PromiseLike<unknown> },
+  files: Record<string, string>,
+): Promise<string[]>;
+
 export function loadChangeControlSources(
   client: GithubClient,
   input: {

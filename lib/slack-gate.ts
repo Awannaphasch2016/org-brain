@@ -3,6 +3,7 @@ import type { GithubClient } from "./github.mjs";
 import { actionNeedsReason } from "./gate-actions.mjs";
 import { renderGateReasonModal } from "./gate-reason.mjs";
 import { actorFromUsersInfo, handleGateClick, handleReasonReply, parseGateButtonValue } from "./slack-gate.mjs";
+import { runApprovedGateChain } from "./gate-chain.mjs";
 import { maybeStartTorAfterGate } from "./tor-interview.mjs";
 
 export type SlackGateOptions = {
@@ -86,6 +87,21 @@ export function createSlackGate(options: SlackGateOptions) {
         }
         const followUp = maybeStartTorAfterGate(options.agent, result, startedSetupTurns);
         if (followUp) await ctx.send(followUp.prompt);
+        if (result.status === "approved" && result.decision) {
+          const chain = await runApprovedGateChain({
+            client,
+            decision: result.decision,
+            allowedUserIds: options.allowedUserIds,
+            signingSecret: process.env.SLACK_SIGNING_SECRET,
+            env: process.env,
+          });
+          for (const notice of chain.notices ?? []) await post(ctx, notice);
+        }
+        if (result.status === "revise" && result.decision?.stage === "srs" && options.agent === "specification") {
+          await ctx.send(
+            `Revise the SRS for pull request #${result.decision.pr}. Call create_srs_pull_request with supersededPullNumber ${result.decision.pr}. Reason: ${result.decision.reason ?? ""}`,
+          );
+        }
       } catch (error) {
         console.error(`[slack-gate] agent=${options.agent} ${scrub(error)}`);
         try {

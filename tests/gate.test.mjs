@@ -213,6 +213,14 @@ test("Gate 1 request revision with a reason records it on the decision", async (
   assert.equal(harness.state.merges.length, 0);
 });
 
+test("Gate 3 request revision requires a reason", async () => {
+  const harness = openHarness();
+  const waiting = await handleGateClick(click(harness, { action: "revise", stage: "srs" }));
+  assert.equal(waiting.status, "needs-reason");
+  assert.equal(harness.state.closes.length, 0);
+  assert.equal(harness.state.merges.length, 0);
+});
+
 test("approve still completes without a reason", async () => {
   const harness = openHarness();
   const done = await handleGateClick(click(harness, { reason: undefined }));

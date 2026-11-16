@@ -78,6 +78,7 @@ export function createSrsPullRequest(
     body: string;
     stamp: string;
     validationOk: boolean;
+    supersededPullNumber?: number;
     files: readonly { path: string; content: string }[];
   },
 ): Promise<{ url: string; number: number; branch: string; headSha: string }>;

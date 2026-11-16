@@ -1,5 +1,4 @@
 import { defineTool } from "eve/tools";
-import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { slackUserIdFromAuth } from "../../../../lib/authz.mjs";
 import { createProjectSetup, loadSlackUpload } from "../../../../lib/project-setup.mjs";
@@ -24,7 +23,6 @@ export default defineTool({
     slackChannelId: z.string().min(1).optional(),
     slackMessageTs: z.string().min(1).optional(),
   }),
-  approval: always(),
   async execute(input, ctx) {
     const pasted = input.text != null;
     if (pasted === Boolean(input.attachmentPath)) {
