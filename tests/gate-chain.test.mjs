@@ -2,13 +2,80 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { recordBaseline } from "../lib/baseline.mjs";
-import { nextPhaseFor, renderTransition, runApprovedGateChain, TRANSITION_KIND } from "../lib/gate-chain.mjs";
-import { mergeRecordingPullRequest } from "../lib/github.mjs";
+import { deferGateChain, nextPhaseFor, RECORDING_POINTER_KIND, renderTransition, runApprovedGateChain, TRANSITION_KIND } from "../lib/gate-chain.mjs";
+import { GithubClient, mergeRecordingPullRequest, recordApprovedBaseline } from "../lib/github.mjs";
 import { writeLoadedFiles } from "../lib/project-files.mjs";
 import { parseSimpleYaml } from "../lib/project-yaml.mjs";
 import { renderStarterProjectYaml } from "../lib/project-setup.mjs";
 import { renderSrsGateCard, renderSrsGateNote } from "../lib/srs-gate.mjs";
 import { IDENTITY } from "./gate-harness.mjs";
+
+test("a manual recording fallback reuses the chain pointer and does not open another pull request", async () => {
+  for (const kind of [RECORDING_POINTER_KIND, TRANSITION_KIND]) {
+    const calls = [];
+    const fetchImpl = async (url, init = {}) => {
+      const method = String(init.method ?? "GET").toUpperCase();
+      const pathname = new URL(url).pathname;
+      calls.push(`${method} ${pathname}`);
+      if (method === "GET" && pathname.endsWith("/issues/12/comments")) {
+        return http([{ id: 1, body: fenced(kind, { idempotencyKey: "gate:tor", recordingPr: 31 }), user: { login: IDENTITY.botLogin } }]);
+      }
+      return http({ message: `unhandled ${method} ${pathname}` }, 500);
+    };
+    const client = new GithubClient({ fetchImpl, token: "test-token", owner: "o", repo: "r", identity: IDENTITY });
+    await assert.rejects(
+      () => recordApprovedBaseline(client, {
+        projectId: "demo",
+        pullNumber: 12,
+        block: "tor",
+        stamp: "20261116T020000Z",
+        allowedUserIds: ["U0CFRUV378D"],
+        signingSecret: "test-signing-secret",
+      }),
+      /recording pull request already opened/,
+    );
+    assert.deepEqual(calls, ["GET /repos/o/r/issues/12/comments"]);
+  }
+});
+
+test("the Slack ack returns before the recording poll starts", async () => {
+  let started = false;
+  let acked = false;
+  deferGateChain(() => {}, async () => {
+    started = true;
+  });
+  acked = true;
+  assert.equal(acked, true);
+  assert.equal(started, false);
+  await Promise.resolve();
+  assert.equal(started, true);
+  const gate = await readFile(new URL("../lib/slack-gate.ts", import.meta.url), "utf8");
+  const vercel = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
+  const eve = await readFile(new URL("../node_modules/eve/dist/src/internal/nitro/host/vercel-build-output-config.js", import.meta.url), "utf8");
+  assert.match(gate, /return deferGateChain\(\(\) => \{\}/);
+  assert.equal(gate.includes("await deferGateChain"), false);
+  assert.equal(gate.includes("await runApprovedGateChain"), true);
+  assert.equal(vercel.maxDuration, undefined);
+  assert.equal(vercel.functions, undefined);
+  assert.match(eve, /maxDuration:`max`/);
+  const interactions = await readFile(new URL("../node_modules/eve/dist/src/public/channels/slack/interactions.js", import.meta.url), "utf8");
+  assert.match(interactions, /waitUntil\(dispatchCustomInteractions/);
+});
+
+function fenced(kind, record) {
+  return ["```json", JSON.stringify({ schema: 1, kind, ...record }, null, 2), "```", ""].join("\n");
+}
+
+function http(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? "OK" : "Error",
+    async text() {
+      return JSON.stringify(body);
+    },
+  };
+}
 
 const HEAD = "a".repeat(40);
 const MERGE = "b".repeat(40);

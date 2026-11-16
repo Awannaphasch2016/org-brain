@@ -6,7 +6,7 @@ import { githubClientFromContext } from "../../../specification/agent/lib/github
 
 export default defineTool({
   description:
-    "After the plan pull request is merged, record the post-edit plan hash and open the baseline pull request. approvedBy comes from the gate decision. Never asks the model for the hash.",
+    "Manual fallback after Gate 2. Open a plan recording pull request only when the gate chain has not already recorded one. Never asks the model for the hash.",
   inputSchema: z.object({
     projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     pullNumber: z.number().int().positive(),
