@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { slackUserIdFromAuth } from "../../../../lib/authz.mjs";
-import { validateChangeReview } from "../../../../lib/change-review.mjs";
+import { changePullRequestCard, validateChangeReview } from "../../../../lib/change-review.mjs";
 import { githubRepoFromEnv, openReviewedPullRequest } from "../../../../lib/github.mjs";
 import { loadChangeControlSources } from "../../../../lib/project-files.mjs";
 import { planStagePullRequest } from "../../../../lib/stage-gate.mjs";
@@ -55,7 +55,7 @@ export default defineTool({
     const { owner, repo } = githubRepoFromEnv();
     const repository = await client.request("GET", `/repos/${owner}/${repo}`);
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-    return openReviewedPullRequest(client, {
+    const opened = await openReviewedPullRequest(client, {
       projectId,
       baseBranch: repository.default_branch,
       branch: `change/${projectId}/${stamp}`,
@@ -64,5 +64,14 @@ export default defineTool({
       files,
       body: "Specification change review. The frozen TOR is not modified. This pull request does not merge itself.",
     });
+    return {
+      ...opened,
+      card: changePullRequestCard({
+        projectId,
+        repo: `${owner}/${repo}`,
+        pr: opened.number,
+        headSha: opened.headSha,
+      }),
+    };
   },
 });

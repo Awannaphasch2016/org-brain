@@ -1,53 +1,30 @@
 import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
-import {
-  getPullRequestStatus,
-  githubRepoFromEnv,
-  openReviewedPullRequest,
-} from "../../../../lib/github.mjs";
-import { setYamlPath } from "../../../../lib/project-yaml.mjs";
+import { gateApproverIds } from "../../../../lib/gate-actions.mjs";
+import { recordApprovedBaseline } from "../../../../lib/github.mjs";
 import { githubClientFromContext } from "../../../specification/agent/lib/github-token.js";
-
-function decodeContent(content: string) {
-  return Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
-}
 
 export default defineTool({
   description:
-    "After a person merges a change pull request, open a follow-up pull request recording that merge as the SRS baseline. Never merges.",
+    "After a person merges a change pull request, open a follow-up pull request recording that merge as the SRS baseline. approvedAt and approvedBy come from the verified decision. Never merges.",
   inputSchema: z.object({
     projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     pullNumber: z.number().int().positive(),
-    approvedBy: z.string().min(1),
     fixture: z.boolean().optional(),
   }),
   approval: always(),
-  async execute({ projectId, pullNumber, approvedBy, fixture }, ctx) {
+  async execute({ projectId, pullNumber, fixture }, ctx) {
     if (fixture) throw new Error("Refusing to record a baseline from a fixture.");
-    const { owner, repo } = githubRepoFromEnv();
     const client = await githubClientFromContext(ctx);
-    const status = await getPullRequestStatus(client, pullNumber);
-    if (!status.merged || !status.mergeCommitSha) throw new Error("The change pull request is not merged.");
-    const repository = await client.request("GET", `/repos/${owner}/${repo}`);
-    const path = `projects/${projectId}/project.yaml`;
-    const current = await client.request(
-      "GET",
-      `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(repository.default_branch)}`,
-    );
-    let yaml = decodeContent(current.content);
-    yaml = setYamlPath(yaml, "srs.status", "approved");
-    yaml = setYamlPath(yaml, "srs.pullRequest", pullNumber);
-    yaml = setYamlPath(yaml, "srs.baseline.mergeCommit", status.mergeCommitSha);
-    yaml = setYamlPath(yaml, "srs.baseline.approvedBy", approvedBy);
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-    return openReviewedPullRequest(client, {
+    return recordApprovedBaseline(client, {
       projectId,
-      baseBranch: repository.default_branch,
-      branch: `change/${projectId}/baseline/${stamp}`,
-      title: `Record updated SRS baseline for ${projectId}`,
-      files: [{ path, content: yaml, sha: current.sha }],
-      body: `Records updated SRS baseline \`${status.mergeCommitSha}\`. This pull request does not merge itself.`,
+      pullNumber,
+      block: "srs",
+      stamp,
+      allowedUserIds: gateApproverIds(),
+      signingSecret: process.env.SLACK_SIGNING_SECRET,
     });
   },
 });
