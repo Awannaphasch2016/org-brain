@@ -59,6 +59,11 @@ Implementation details wait for later design.
 `;
 
 const tracedTor = "IS-001 add a task\nIS-002 stay with the team\n";
+const traced = `| Requirement | Source IS | Status | Reason |
+| --- | --- | --- | --- |
+| FR-001 | IS-001 | covered | task |
+| NFR-001 | IS-002 | covered | team |
+`;
 
 test("valid SRS passes when the TOR hash matches", () => {
   const tor = tracedTor;
@@ -68,6 +73,7 @@ test("valid SRS passes when the TOR hash matches", () => {
     expectedTorSha256: sha256(tor),
     elicitationLog: "",
     analysis: "## Gap register\n\n- G-001 | nonblocking | resolved | diagram not required\n",
+    traceability: traced,
   });
   assert.equal(result.ok, true, result.errors.join("\n"));
 });
@@ -134,6 +140,7 @@ test("TOR path changes, blocking gaps, and unresolved conflicts fail", () => {
     torText: tracedTor,
     expectedTorSha256: sha256(tracedTor),
     elicitationLog: "## EL-001\n\n- class: conflict\n- resolution: rejected\n",
+    traceability: traced,
   });
   assert.equal(resolved.ok, true, resolved.errors.join("\n"));
 });
@@ -160,6 +167,8 @@ test("authorization is fail-closed", () => {
 
 test("sandbox writes cannot touch the TOR, knowledge, or src", () => {
   assert.equal(assessWrite("projects/task-tracker-lite/docs/srs.md").allowed, true);
+  assert.equal(assessWrite("projects/task-tracker-lite/docs/traceability.md").allowed, false);
+  assert.equal(assessWrite("projects/task-tracker-lite/docs/traceability.md", { allowedDocs: ["traceability.md"] }).allowed, true);
   assert.equal(assessWrite("/workspace/projects/task-tracker-lite/docs/tor.md").allowed, false);
   assert.equal(assessWrite("knowledge/guidelines/tor-structure.md").allowed, false);
   assert.equal(assessWrite("projects/task-tracker-lite/src/main.ts").allowed, false);
@@ -247,7 +256,10 @@ test("an existing file is updated and a missing file is created in one commit", 
   const logEntry = tree.tree.find((entry) => entry.path === logPath);
   const reportEntry = tree.tree.find((entry) => entry.path === reportPath);
   const srsEntry = tree.tree.find((entry) => entry.path === srsPath);
-  assert.equal(tree.tree.length, 3);
+  assert.deepEqual(
+    tree.tree.map((entry) => entry.path).sort(),
+    [logPath, reportPath, srsPath, "projects/task-tracker-lite/docs/traceability.md"].sort(),
+  );
   assert.equal(logEntry.type, "blob");
   assert.notEqual(logEntry.sha, "sha-log");
   assert.equal(reportEntry.type, "blob");
@@ -395,6 +407,7 @@ function srsInput(stamp = "20261109T201614Z") {
       { path: "projects/task-tracker-lite/docs/srs.md", content: validSrs },
       { path: "projects/task-tracker-lite/docs/elicitation-log.md", content: "log" },
       { path: "projects/task-tracker-lite/docs/validation-report.md", content: "report" },
+      { path: "projects/task-tracker-lite/docs/traceability.md", content: traced },
     ],
   };
 }
