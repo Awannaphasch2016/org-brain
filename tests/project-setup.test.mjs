@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { assessProjectFormat } from "../lib/baseline.mjs";
@@ -346,6 +347,55 @@ test("reject marks status: rejected via gate only", async () => {
   assert.equal(rejected.state.merges.length, 0);
   assert.equal(rejected.state.trees[0].tree.length, 1);
   assert.equal(rejected.state.trees[0].tree[0].path, "projects/demo/project.yaml");
+});
+
+test("pasted Slack text is stored byte for byte", async () => {
+  const text = "A small app to track team tasks";
+  const harness = setupClient();
+  const opened = await createProjectSetup(harness.client, setupInput({
+    source: "slack-message",
+    text,
+    slackChannelId: "C0CG6SG8PNW",
+    slackMessageTs: "1700000000.000100",
+    filename: undefined,
+    mediaType: undefined,
+    bytes: undefined,
+    slackFileId: undefined,
+  }));
+  assert.equal(opened.branch, `setup/demo/${STAMP}`);
+  const source = harness.state.blobs.find((blob) => blob.content === text);
+  assert.ok(source);
+  assert.equal(createHash("sha256").update(source.content).digest("hex"), createHash("sha256").update(text).digest("hex"));
+  const yaml = parseSimpleYaml(harness.state.blobs.find((blob) => String(blob.content).startsWith("id:")).content);
+  assert.equal(yaml.intake.source.mediaType, "text/markdown");
+  assert.equal(yaml.intake.source.slackFileId, "msg:C0CG6SG8PNW:1700000000.000100");
+  assert.equal(yaml.intake.source.uploadedBy, UPLOADER);
+  assert.equal(yaml.intake.source.sha256, createHash("sha256").update(text).digest("hex"));
+});
+
+test("pasted text uses the same upload guards", async () => {
+  const harness = setupClient();
+  const pasted = (text, extra = {}) => createProjectSetup(harness.client, setupInput({
+    source: "slack-message",
+    text,
+    slackChannelId: "C0CG6SG8PNW",
+    slackMessageTs: "1700000000.000100",
+    filename: undefined,
+    mediaType: undefined,
+    bytes: undefined,
+    slackFileId: undefined,
+    ...extra,
+  }));
+  await assert.rejects(() => pasted(""), /empty file/);
+  await assert.rejects(() => pasted(" \n\t "), /empty file/);
+  await assert.rejects(() => pasted(`hello\0`), /binary file/);
+  await assert.rejects(() => pasted("a".repeat(1_000_001)), /file is larger than 1 MB/);
+  await assert.rejects(() => pasted("hello", { userId: "UOTHER" }), /allowlist/);
+  await assert.rejects(
+    () => pasted("hello", { uploadedBy: "slack:T0TEAM:UOTHER" }),
+    /uploader is not the signed-in Slack user/,
+  );
+  assert.equal(harness.state.blobs.length, 0);
 });
 
 function setupInput(overrides = {}) {
