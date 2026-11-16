@@ -1,5 +1,8 @@
 export const RECORDING_KIND: string;
 export const RECORDING_DOCUMENTS: readonly string[];
+export const TRANSITION_KIND: string;
+export const RECORDING_POINTER_KIND: string;
+export function commentsAlreadyRecorded(comments: readonly { body?: string }[] | null | undefined): boolean;
 export function renderRecordingReference(reference: Record<string, unknown>): string;
 export function parseRecordingReference(body: string): {
   document: string;

@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { slackUserIdFromAuth } from "../../../../lib/authz.mjs";
-import { loadApprovedPlan, loadApprovedTor } from "../../../../lib/project-files.mjs";
+import { loadApprovedPlan, loadApprovedTor, writeLoadedFiles } from "../../../../lib/project-files.mjs";
 import { assessPhase3Gate } from "../../../../lib/srs-validate.mjs";
 import { specificationConfig } from "../../../../generated/config.js";
 import { githubClientFromContext } from "../lib/github-token.js";
@@ -42,15 +42,14 @@ export default defineTool({
       return { denied: false, fetch: false, stop: true, projectId, reason: phase.reason };
     }
     const sandbox = await ctx.getSandbox();
-    for (const [path, content] of Object.entries(loaded.files ?? {})) {
-      await sandbox.writeTextFile({ path, content });
-    }
+    const conflict = await writeLoadedFiles(sandbox, loaded.files ?? {});
     const baseline = loaded.project?.tor?.baseline ?? {};
     return {
       denied: false,
       fetch: true,
       stop: false,
       projectId,
+      conflict,
       tor: {
         path: loaded.project?.tor?.path,
         status: loaded.project?.tor?.status,
