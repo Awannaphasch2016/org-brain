@@ -25,7 +25,7 @@ test("stage4 planning tools and planning: key unchanged since Phase 1 merge", as
     hash.update(await readFile(file));
   }
   assert.equal(hash.digest("hex"), PLANNING_TREE);
-  const yaml = await readFile(new URL("../projects/task-tracker-lite/project.yaml", import.meta.url), "utf8");
+  const yaml = await readFile(new URL("../fixtures/test/task-tracker-lite/project.yaml", import.meta.url), "utf8");
   const block = yaml.slice(yaml.indexOf("planning:"), yaml.indexOf("implementation:"));
   assert.equal(createHash("sha256").update(block).digest("hex"), PLANNING_BLOCK);
   assert.match(block, /^planning:\n {2}path: docs\/feature-issues\.md\n {2}status: approved\n/);

@@ -9,7 +9,7 @@ const root = new URL("..", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
 test("contradictions are rejected and accepted elaborations keep requirement ids", async () => {
-  const tor = await read("projects/task-tracker-lite/docs/tor.md");
+  const tor = await read("fixtures/test/task-tracker-lite/docs/tor.md");
   const original = await read("fixtures/test/p5-change/srs.md");
   const revised = await read("fixtures/test/p5-change/srs-revised.md");
   const base = {

@@ -324,8 +324,8 @@ test("reviewed and baseline pull requests update an existing project file withou
 });
 
 test("task-tracker-lite keeps the retired TOR block and the new format refuses it", async () => {
-  const tor = await readRepo("projects/task-tracker-lite/docs/tor.md");
-  const yaml = await readRepo("projects/task-tracker-lite/project.yaml");
+  const tor = await readRepo("fixtures/test/task-tracker-lite/docs/tor.md");
+  const yaml = await readRepo("fixtures/test/task-tracker-lite/project.yaml");
   const project = parseSimpleYaml(yaml);
   assert.equal(project.tor.baselineId, "TOR-001");
   assert.equal(project.tor.status, "frozen");
