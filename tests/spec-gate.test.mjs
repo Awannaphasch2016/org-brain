@@ -51,6 +51,11 @@ Verifies: FR-001
 
 Text only.
 `;
+const traceability = `| Requirement | Source IS | Status | Reason |
+| --- | --- | --- | --- |
+| FR-001 | IS-001 | covered | document |
+| NFR-001 | IS-001 | covered | owner |
+`;
 
 const project = parseSimpleYaml(`id: demo
 title: Demo
@@ -123,6 +128,7 @@ test("valid new-format SRS passes", () => {
     torText: tor,
     expectedTorSha256: hash,
     analysis: "## Gap register\n\n- G-001 | nonblocking | resolved | none\n",
+    traceability,
   });
   assert.equal(result.ok, true, result.errors.join("\n"));
   assert.throws(

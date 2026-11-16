@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { assessPhase3Gate, sha256, validateSrs } from "../../../../lib/srs-validate.mjs";
-import { assessWrite } from "../../../../lib/write-policy.mjs";
+import { assessWrite, SPECIFICATION_DOCS } from "../../../../lib/write-policy.mjs";
 
 async function readOptional(
   sandbox: { readTextFile: (input: { path: string }) => PromiseLike<string | null> },
@@ -49,10 +49,11 @@ export default defineTool({
       expectedTorSha256: baseline.sha256,
       elicitationLog: await readOptional(sandbox, `${root}/docs/elicitation-log.md`),
       analysis: await readOptional(sandbox, `${root}/docs/_analysis.md`),
+      traceability: await readOptional(sandbox, `${root}/docs/traceability.md`),
       changedPaths: changedPaths ?? [],
     });
     const reportPath = `${root}/docs/validation-report.md`;
-    const decision = assessWrite(reportPath);
+    const decision = assessWrite(reportPath, { allowedDocs: SPECIFICATION_DOCS });
     if (!decision.allowed) throw new Error(decision.reason);
     await sandbox.writeTextFile({ path: reportPath, content: result.report });
     return {

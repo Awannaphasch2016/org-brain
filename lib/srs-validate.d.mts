@@ -18,6 +18,7 @@ export function validateSrs(input: {
   expectedTorSha256?: string;
   elicitationLog?: string;
   analysis?: string;
+  traceability?: string;
   changedPaths?: readonly string[];
 }): {
   ok: boolean;
