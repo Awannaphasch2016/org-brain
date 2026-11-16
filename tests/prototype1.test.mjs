@@ -208,6 +208,19 @@ test("GitHub client rejects an unapproved merge and the create flow never calls 
   assert.equal(harness.calls.some((call) => call.method === "PUT"), false);
 });
 
+test("an SRS revision closes the old pull request and opens a new stamp", async () => {
+  const harness = githubHarness();
+  const client = new GithubClient({
+    fetchImpl: harness.fetchImpl,
+    token: "test-token",
+    owner: "o",
+    repo: "r",
+  });
+  const opened = await createSrsPullRequest(client, { ...srsInput("20261116T030000Z"), supersededPullNumber: 4 });
+  assert.equal(opened.branch, "spec/task-tracker-lite/srs/20261116T030000Z");
+  assert.deepEqual(harness.state.closes, [4]);
+});
+
 test("an existing file is updated and a missing file is created in one commit", async () => {
   const logPath = "projects/task-tracker-lite/docs/elicitation-log.md";
   const reportPath = "projects/task-tracker-lite/docs/validation-report.md";
@@ -402,6 +415,7 @@ function githubHarness({ baseBranch = "main", baseSha = "abc123", files = {}, br
     commits: [],
     trees: [],
     blobCount: 0,
+    closes: [],
   };
   const fetchImpl = async (url, init) => {
     const method = init.method.toUpperCase();
@@ -452,6 +466,10 @@ function githubHarness({ baseBranch = "main", baseSha = "abc123", files = {}, br
       if (name === baseBranch) return http({ message: "refusing to update the base branch" }, 403);
       state.branches[name] = body.sha;
       return http({ ref: `refs/heads/${name}`, object: { sha: body.sha } });
+    }
+    if (method === "PATCH" && /\/pulls\/\d+$/.test(parsed.pathname)) {
+      state.closes.push(Number(parsed.pathname.match(/\/pulls\/(\d+)$/)[1]));
+      return http({ state: "closed", number: state.closes.at(-1) });
     }
     if (method === "POST" && parsed.pathname.endsWith("/pulls")) {
       return http({

@@ -1,5 +1,4 @@
 import { defineTool } from "eve/tools";
-import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { gateApproverIds } from "../../../../lib/gate-actions.mjs";
 import { closeSetupProject, openRejectedStatusPullRequest } from "../../../../lib/project-setup.mjs";
@@ -13,7 +12,6 @@ export default defineTool({
     pullNumber: z.number().int().positive(),
     setup: z.boolean().optional(),
   }),
-  approval: always(),
   async execute({ projectId, pullNumber, setup }, ctx) {
     const client = await githubClientFromContext(ctx);
     if (setup) return closeSetupProject(client, { projectId, pullNumber });
