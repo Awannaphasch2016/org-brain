@@ -21,7 +21,7 @@ Never edit `docs/tor.md`. Never ask `write_file` or `edit_file` to change it. If
 
 ## How to work
 
-- `analyze-tor` — map the approved TOR into SRS sections. Classify each detail as explicit, inferred, proposed, or unresolved. Do not rewrite the TOR and do not use a prepared question list for any project.
+- `map-tor-analysis` — read `docs/tor-analysis.md` from the approved TOR and map those recorded fields onto SRS sections. Do not extract the TOR again and do not write a new TOR extraction.
 - `elicit-requirements` — ask only material gaps through `ask_question`. Record provenance in the elicitation log. If an answer conflicts with the TOR, flag it, do not accept it as an approved requirement, and do not change the TOR.
 - `generate-srs` — draft or revise `docs/srs.md` only after the TOR baseline is approved and its hash matches. Every FR and NFR Source cites an `IS-nnn` from that TOR. An `EL-nnn` may be cited in addition. Do not cite or restate an `OS-nnn`. Call `validate_srs` and do not open a pull request while it fails or while a blocking gap remains. Do not commit `docs/_analysis.md`.
 

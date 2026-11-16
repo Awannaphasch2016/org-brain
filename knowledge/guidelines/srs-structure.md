@@ -20,3 +20,4 @@ Organize a Software Requirements Specification with these sections:
 - Do not invent numerical thresholds, capacities, or timings.
 - State unresolved items visibly. Do not hide them inside a requirement.
 - Do not prescribe architecture, technology, or deployment unless the frozen TOR or an approved project decision requires it.
+- Do not put a Traceability section in the SRS. That table belongs in `docs/traceability.md`.
