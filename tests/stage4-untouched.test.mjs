@@ -25,6 +25,7 @@ test("stage4 planning tools and planning: key unchanged since Phase 1 merge", as
     hash.update(await readFile(file));
   }
   assert.equal(hash.digest("hex"), PLANNING_TREE);
+  // The retired planning block is read from the fixture. PLANNING_TREE and PLANNING_BLOCK stay the f0c79ad values.
   const yaml = await readFile(new URL("../fixtures/test/task-tracker-lite/project.yaml", import.meta.url), "utf8");
   const block = yaml.slice(yaml.indexOf("planning:"), yaml.indexOf("implementation:"));
   assert.equal(createHash("sha256").update(block).digest("hex"), PLANNING_BLOCK);

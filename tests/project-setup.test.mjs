@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { buildDecision, renderDecisionComment } from "../lib/gate-decision.mjs";
 import { GithubClient, openReviewedPullRequest } from "../lib/github.mjs";
@@ -113,6 +113,25 @@ test("uploader not in allowlist refused", async () => {
     /allowlist/,
   );
   assert.equal(fetched, false);
+});
+
+test("the retired project directory is gone and task-tracker-lite can be created", async () => {
+  assert.equal(existsSync("projects/task-tracker-lite"), false);
+  const harness = setupClient();
+  const opened = await createProjectSetup(harness.client, setupInput({ projectId: "task-tracker-lite" }));
+  assert.equal(opened.branch, `setup/task-tracker-lite/${STAMP}`);
+  assert.equal(opened.merged, false);
+  const tree = harness.state.trees[0].tree.map((entry) => entry.path).sort();
+  assert.deepEqual(tree, [
+    "projects/task-tracker-lite/intake/tor-source.md",
+    "projects/task-tracker-lite/project.yaml",
+  ]);
+  assert.match(harness.state.pulls[0].body, /project\.yaml/);
+  assert.match(harness.state.pulls[0].body, /intake\/tor-source\.md/);
+  assert.match(harness.state.pulls[0].body, /Nothing is merged by the agent/);
+  const actions = opened.card.blocks.find((block) => block.type === "actions").elements.map((element) => element.action_id);
+  assert.deepEqual(actions, ["gate:approve", "gate:reject"]);
+  assert.match(opened.card.blocks[0].text.text, /Gate setup/);
 });
 
 test("setup PR contains exactly two paths", async () => {
@@ -233,7 +252,7 @@ function decisionComment(action) {
 }
 
 function setupClient({ directory = false, refs = [], files = {} } = {}) {
-  const state = { trees: [], merges: [], closes: 0, blobs: [] };
+  const state = { trees: [], merges: [], closes: 0, blobs: [], pulls: [] };
   const fetchImpl = async (url, init = {}) => {
     const method = String(init.method ?? "GET").toUpperCase();
     const parsed = new URL(url);
@@ -274,6 +293,7 @@ function setupClient({ directory = false, refs = [], files = {} } = {}) {
     if (method === "POST" && pathname.endsWith("/git/commits")) return http({ sha: "d".repeat(40) });
     if (method === "PATCH" && pathname.includes("/git/refs/heads/")) return http({ object: { sha: body.sha } });
     if (method === "POST" && pathname.endsWith("/pulls")) {
+      state.pulls.push(body);
       return http({ html_url: "https://github.com/o/r/pull/4", number: 4, head: { sha: "d".repeat(40) } });
     }
     if (method === "GET" && /\/pulls\/\d+$/.test(pathname)) {

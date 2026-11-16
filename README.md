@@ -67,7 +67,7 @@ The reusable corpus is approved. `knowledge/manifest.json` records `approvedBy` 
 
 ## Sample project
 
-`projects/task-tracker-lite/docs/tor.md` is frozen baseline TOR-001, copied verbatim from the owner's brief. `project.yaml` stores its SHA-256. `tor.gitCommit` is `33df89bb531e635f8fea2f751d9559c15c3a4065`, the commit that introduced those TOR bytes.
+The retired Task Tracker Lite tree is not on this branch. Its `project.yaml` and `docs/tor.md` are a byte-identical fixture at `fixtures/test/task-tracker-lite/` for the old-format tests. The rest of that project remains in git history. The fixture TOR is baseline TOR-001. `tor.gitCommit` in that yaml is `33df89bb531e635f8fea2f751d9559c15c3a4065`.
 
 ## Still outside this change
 
