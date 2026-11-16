@@ -9,7 +9,7 @@ const root = new URL("..", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
 test("contradictions are rejected and accepted elaborations keep requirement ids", async () => {
-  const tor = await read("fixtures/test/task-tracker-lite/docs/tor.md");
+  const tor = await read("fixtures/test/p5-new/tor.md");
   const original = await read("fixtures/test/p5-change/srs.md");
   const revised = await read("fixtures/test/p5-change/srs-revised.md");
   const base = {
@@ -38,15 +38,15 @@ test("contradictions are rejected and accepted elaborations keep requirement ids
   const customer = validateChangeReview({
     ...base,
     review: await read("fixtures/test/p5-change/feedback-elaboration.md"),
-    revisedSrs: `${revised}\n\nThe product shall provide external customer access.\n`,
+    revisedSrs: `${revised}\nSource: OS-001\n`,
   });
-  assert.equal(customer.ok, false);
+  assert.ok(customer.errors.includes("revised SRS adds excluded OS-001"));
   const dropped = validateChangeReview({
     ...base,
     review: await read("fixtures/test/p5-change/feedback-elaboration.md"),
-    revisedSrs: revised.replace(/### FR-002[\s\S]*?Source: TOR 3\.3\n/, ""),
+    revisedSrs: revised.replace(/### FR-002[\s\S]*?Source: IS-002\n/, ""),
   });
-  assert.equal(dropped.ok, false);
+  assert.ok(dropped.errors.includes("revised SRS drops IS-002"));
   const fixture = planStagePullRequest({
     fixture: true,
     validationOk: true,
