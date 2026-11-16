@@ -7,7 +7,6 @@ The upload names one in-scope item and one exclusion.
 | Field | Status |
 | --- | --- |
 | 1.1 Document Identification | confirmed |
-| 1.2 References | confirmed |
 | 2.1 Background | confirmed |
 | 2.2 Purpose | confirmed |
 | 2.3 Objectives | confirmed |
@@ -20,6 +19,7 @@ The upload names one in-scope item and one exclusion.
 | 5.1 Technical and Organizational Constraints | confirmed |
 | 5.2 Timeline and Milestones | confirmed |
 | 5.3 Responsibilities and Dependencies | confirmed |
+| 6 References | confirmed |
 
 ## Gap register
 
