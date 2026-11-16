@@ -7,7 +7,10 @@ import { GithubClient } from "../lib/github.mjs";
 import { loadApprovedSrs, loadApprovedTor } from "../lib/project-files.mjs";
 import { setYamlPath } from "../lib/project-yaml.mjs";
 import { renderHashMismatchAlert } from "../lib/slack-gate.mjs";
+import { bundledTorContract, torContractFields, torSectionsFromGuideline, validateIntake } from "../lib/intake-validate.mjs";
 import { openTorDraft, recordTorBaseline } from "../lib/tor-draft.mjs";
+import { nextInterviewQuestions, planTorInterview } from "../lib/tor-interview.mjs";
+import { torAnswerResult, torInboundResult } from "../lib/tor-slack.mjs";
 import { IDENTITY, pullFixture } from "./gate-harness.mjs";
 
 const root = new URL("..", import.meta.url);
@@ -153,6 +156,143 @@ test("hash mismatch stops spec and architecture loaders and renders an alert", a
   const alert = renderHashMismatchAlert({ projectId: "demo", reason: tor.reason });
   assert.equal(JSON.stringify(alert.blocks).includes('"type":"actions"'), false);
   assert.match(alert.text, /hash mismatch/);
+});
+
+test("the interview skill maps one question to each required field", async () => {
+  const skill = await read("agents/tor/agent/skills/interview-tor/SKILL.md");
+  const structure = await read("knowledge/guidelines/tor-structure.md");
+  const fields = [...skill.matchAll(/^-\s+field:\s+(.+?)\s+\|/gm)].map((match) => match[1]);
+  const sections = [...skill.matchAll(/^-\s+section:\s+(\S+)\s+\|/gm)].map((match) => match[1]);
+  const contract = torContractFields(bundledTorContract()).required.map((field) => field.name);
+  const requiredSections = torSectionsFromGuideline(structure).required.map((section) => section.id);
+  assert.deepEqual(fields, contract);
+  assert.deepEqual(sections, requiredSections);
+  assert.equal(new Set(fields).size, fields.length);
+  assert.equal(new Set(sections).size, sections.length);
+  for (const name of fields) assert.equal(skill.split(name).length - 1, 1, name);
+  for (const id of sections) {
+    const pattern = new RegExp(`(?<![0-9.])${id.replace(".", "\\.")}(?![0-9])`, "g");
+    assert.equal(skill.match(pattern).length, 1, id);
+  }
+  assert.match(skill, /problem/);
+  assert.match(skill, /objectives and outcomes/);
+  assert.match(skill, /scope \(IS\/OS\)/);
+  assert.match(skill, /stakeholders/);
+});
+
+test("instructions interview before validation and the pull request", async () => {
+  const text = await read("agents/tor/agent/instructions.md");
+  const interview = text.indexOf("interview-tor");
+  const validate = text.indexOf("`validate_intake`");
+  const pull = text.indexOf("`create_tor_pull_request`");
+  assert.ok(interview > 0 && interview < validate && validate < pull);
+  assert.match(text, /ask_question/);
+  assert.match(text, /TEL-/);
+  assert.match(text, /confirmed/);
+  assert.match(text, /missing` or `draft/);
+});
+
+test("a one-line idea asks for every unconfirmed field and does not draft", async () => {
+  const structure = await read("knowledge/guidelines/tor-structure.md");
+  const idea = "A small app to track team tasks";
+  const plan = planTorInterview({
+    tor: idea,
+    analysis: "",
+    elicitationLog: "",
+    structureMarkdown: structure,
+  });
+  const expected = nextInterviewQuestions({ analysis: "", structureMarkdown: structure });
+  assert.equal(plan.createTorPullRequest, false);
+  assert.deepEqual(plan.tools, ["ask_question"]);
+  assert.equal(plan.questions.length, expected.length);
+  assert.ok(plan.questions.length > 10);
+  const validation = validateIntake({ tor: idea, analysis: "", elicitationLog: "", structureMarkdown: structure });
+  assert.equal(validation.ok, false);
+  assert.ok(validation.errors.some((error) => error.startsWith("unconfirmed required field:")));
+});
+
+test("interview questions follow the empty, partial, and complete fixtures", async () => {
+  const structure = await read("knowledge/guidelines/tor-structure.md");
+  const empty = nextInterviewQuestions({
+    analysis: await read("fixtures/test/p1-intake-empty/tor-analysis.md"),
+    structureMarkdown: structure,
+  });
+  const partial = nextInterviewQuestions({
+    analysis: await read("fixtures/test/p1-intake-partial/tor-analysis.md"),
+    structureMarkdown: structure,
+  });
+  const complete = nextInterviewQuestions({
+    analysis: await read("fixtures/test/p1-intake-complete/tor-analysis.md"),
+    structureMarkdown: structure,
+  });
+  const contract = torContractFields(bundledTorContract()).required.map((field) => field.name);
+  const sections = torSectionsFromGuideline(structure).required.map((section) => section.id);
+  assert.deepEqual(empty.map((question) => question.id), [...contract, ...sections]);
+  assert.ok(partial.some((question) => question.id === "1.1" && question.state === "draft"));
+  assert.equal(partial.some((question) => question.id === "2.1"), true);
+  assert.deepEqual(complete.map((question) => question.id), contract);
+});
+
+test("a draft is planned only after every answer is confirmed", async () => {
+  const structure = await read("knowledge/guidelines/tor-structure.md");
+  const tor = await read("fixtures/test/p1-intake-complete/tor.md");
+  const contract = torContractFields(bundledTorContract()).required;
+  const sections = torSectionsFromGuideline(structure).required;
+  const analysis = `${await read("fixtures/test/p1-intake-complete/tor-analysis.md")}\n${contract
+    .map((field) => `| ${field.label} | confirmed |`)
+    .join("\n")}\n`;
+  const elicitationLog = [...contract, ...sections]
+    .map((item, index) => `## TEL-${String(index + 1).padStart(3, "0")}\n\nclass: clarification\nresolution: answered\n`)
+    .join("\n");
+  const ready = planTorInterview({ tor, analysis, elicitationLog, structureMarkdown: structure });
+  assert.deepEqual(ready.tools, ["validate_intake", "create_tor_pull_request"]);
+  assert.equal(ready.createTorPullRequest, true);
+  assert.equal(ready.validation.ok, true, ready.validation.errors.join("\n"));
+  const shortLog = planTorInterview({
+    tor,
+    analysis,
+    elicitationLog: "## TEL-001\n\nclass: clarification\nresolution: answered\n",
+    structureMarkdown: structure,
+  });
+  assert.equal(shortLog.createTorPullRequest, false);
+  await assert.rejects(
+    () => openTorDraft({ owner: "o", repo: "r", async request() { throw new Error("fetched"); } }, {
+      projectId: "demo",
+      stamp: STAMP,
+      baseBranch: "main",
+      grant: { agent: "tor", projectId: "demo", branchPrefix: "tor/demo/" },
+      tor: "A small app to track team tasks",
+      analysis: "",
+      elicitationLog: "",
+      structureMarkdown: structure,
+    }),
+    /intake fails|unconfirmed required field/,
+  );
+});
+
+test("thread follow-ups cover setup and the interview", async () => {
+  const source = await read("agents/tor/agent/channels/slack.ts");
+  assert.match(source, /TOR setup and interview thread/);
+  assert.match(source, /setup or the TOR interview/);
+  const auth = { principalId: "slack:T0TEAM:U0CFRUV378D" };
+  const guidance = "You are continuing a TOR setup and interview thread. Reply only when the message continues setup or the TOR interview. Otherwise call no_reply.";
+  const deferred = torInboundResult({
+    allowedUser: true,
+    allowedChannel: true,
+    approved: true,
+    auth,
+    inThread: true,
+    subscribed: true,
+    guidance,
+  });
+  assert.equal(deferred.status, "deferred");
+  assert.match(deferred.guidance, /setup/);
+  assert.match(deferred.guidance, /interview/);
+  assert.equal(torInboundResult({ isBot: true, allowedUser: true, allowedChannel: true, approved: true, auth, guidance }), null);
+  assert.equal(torAnswerResult({ allowedUser: true, allowedChannel: true, auth }).auth, auth);
+  assert.equal(torAnswerResult({ allowedUser: false, allowedChannel: true, auth }), null);
+  assert.equal(torInboundResult({ allowedUser: false, allowedChannel: true, approved: true, auth, inThread: true, subscribed: true, guidance }), null);
+  assert.equal(torInboundResult({ allowedUser: true, allowedChannel: false, approved: true, auth, inThread: true, subscribed: true, guidance }), null);
 });
 
 function approvedYaml(block) {
