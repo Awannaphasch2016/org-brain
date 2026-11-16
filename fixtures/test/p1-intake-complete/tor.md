@@ -5,10 +5,6 @@ Project name: Intake fixture
 Customer contact: role owner, organisation only
 Owner: document owner
 
-### 1.2 References
-
-See the reference list.
-
 ### 2.1 Background
 
 The work needs one shared place for requirements.
@@ -61,4 +57,4 @@ The owner reviews. No other dependency.
 
 ### 6. References
 
-None beyond the structure guideline.
+none
