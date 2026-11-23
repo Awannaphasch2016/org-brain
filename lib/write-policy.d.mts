@@ -1,3 +1,5 @@
+export const SPECIFICATION_DOCS: ReadonlySet<string>;
+
 export function toWorkspaceRelative(filePath: string):
   | { ok: true; relative: string }
   | { ok: false; reason: string };
@@ -5,7 +7,7 @@ export function toWorkspaceRelative(filePath: string):
 export function assessWrite(
   filePath: string,
   options?: {
-    allowedDocs?: readonly string[];
+    allowedDocs?: Iterable<string>;
     allowSrc?: boolean;
     branch?: string;
     torGrant?: { agent: string; projectId: string; branchPrefix: string };

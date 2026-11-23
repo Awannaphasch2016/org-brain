@@ -49,12 +49,14 @@ export default defineTool({
     const srs = await readOptional(sandbox, `${root}/docs/srs.md`);
     const elicitationLog = await readOptional(sandbox, `${root}/docs/elicitation-log.md`);
     const analysis = await readOptional(sandbox, `${root}/docs/_analysis.md`);
+    const traceability = await readOptional(sandbox, `${root}/docs/traceability.md`);
     const validation = validateSrs({
       srs,
       torText: torText ?? "",
       expectedTorSha256: baseline.sha256,
       elicitationLog,
       analysis,
+      traceability,
       changedPaths: [],
     });
     if (!validation.ok) {
@@ -68,6 +70,7 @@ export default defineTool({
       { path: `${root}/docs/srs.md`, content: srs },
       { path: `${root}/docs/elicitation-log.md`, content: elicitationLog },
       { path: `${root}/docs/validation-report.md`, content: report },
+      { path: `${root}/docs/traceability.md`, content: traceability },
     ];
     const { owner, repo } = githubRepoFromEnv();
     const client = await githubClientFromContext(ctx);
