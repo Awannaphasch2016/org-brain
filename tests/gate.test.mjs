@@ -259,6 +259,15 @@ test("Gate 3 request revision requires a reason", async () => {
   assert.equal(harness.state.merges.length, 0);
 });
 
+test("Gate 3 reject without a reason keeps the pull request open", async () => {
+  const harness = openHarness();
+  const waiting = await handleGateClick(click(harness, { action: "reject", stage: "srs" }));
+  assert.equal(waiting.status, "needs-reason");
+  assert.equal(harness.state.closes.length, 0);
+  assert.equal(harness.state.merges.length, 0);
+  assert.equal(harness.state.pulls[12].state, "open");
+});
+
 test("approve still completes without a reason", async () => {
   const harness = openHarness();
   const done = await handleGateClick(click(harness, { reason: undefined }));
