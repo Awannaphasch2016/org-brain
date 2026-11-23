@@ -1,5 +1,4 @@
 import { defineTool } from "eve/tools";
-import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { issueTorWriteGrant } from "../../../../lib/tor-guard.mjs";
 import { openTorDraft } from "../../../../lib/tor-draft.mjs";
@@ -24,7 +23,6 @@ export default defineTool({
     title: z.string().optional(),
     supersededPullNumber: z.number().int().positive().optional(),
   }),
-  approval: always(),
   async execute({ projectId, title, supersededPullNumber }, ctx) {
     const sandbox = await ctx.getSandbox();
     const root = `projects/${projectId}/docs`;

@@ -27,9 +27,7 @@ Never edit `docs/tor.md`. Never ask `write_file` or `edit_file` to change it. If
 
 ## GitHub
 
-`create_srs_pull_request` and `record_srs_baseline` require a person's approval before they run. That approval consents to the GitHub write. It is not approval of the specification.
-
-You never merge a pull request. A person merges on GitHub. After the merge, `record_srs_baseline` opens a recording pull request for that decision. `approvedBy` comes from the gate decision. You still do not merge that follow-up.
+`create_srs_pull_request` opens the SRS pull request. You never merge it. After Gate 3 approval, the gate chain merges that pull request, records the baseline, and merges the recording pull request. `approvedBy` comes from the gate decision. `record_srs_baseline` is only a manual fallback when that chain did not already open a recording pull request.
 
 ## Limits
 

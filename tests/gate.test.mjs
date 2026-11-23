@@ -9,6 +9,7 @@ import {
   renderDecisionComment,
 } from "../lib/gate-decision.mjs";
 import { signSlackRequest, verifySlackRequestSignature } from "../lib/slack-signature.mjs";
+import { renderSrsGateCard } from "../lib/srs-gate.mjs";
 import { actorFromUsersInfo, handleGateClick, handleReasonReply, renderGateCard } from "../lib/slack-gate.mjs";
 import { maybeStartTorAfterGate } from "../lib/tor-interview.mjs";
 import { IDENTITY, gateGithub, pullFixture } from "./gate-harness.mjs";
@@ -52,6 +53,43 @@ test("stage table offers only the actions for that stage", () => {
   assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0CFRUV378D, UEXTRA" }), [ANAK, "UEXTRA"]);
   assert.throws(() => gateApproverIds({ FACTORY_GATE_APPROVER_IDS: " , " }), /fail-closed/);
   assert.throws(() => gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "WBOTUSER01" }), /fail-closed/);
+});
+
+test("the SRS card offers Reject, Approve, and Revise and each routes to its handler", async () => {
+  const card = renderSrsGateCard({ projectId: "demo", repo: "o/r", pr: 12, headSha: HEAD });
+  const buttons = card.blocks.find((block) => block.type === "actions").elements;
+  assert.deepEqual(
+    buttons.map((button) => ({ action: JSON.parse(button.value).action, label: button.text.text, actionId: button.action_id })),
+    [
+      { action: "approve", label: "Approve", actionId: "gate:approve" },
+      { action: "reject", label: "Reject", actionId: "gate:reject" },
+      { action: "revise", label: "Request revision", actionId: "gate:revise" },
+    ],
+  );
+  assert.deepEqual(actionsForStage("srs", "open"), ["approve", "reject", "revise"]);
+  const expected = {
+    approve: { status: "approved", merges: 1, closes: 0 },
+    reject: { status: "rejected", merges: 0, closes: 1 },
+    revise: { status: "revise", merges: 0, closes: 0 },
+  };
+  for (const button of buttons) {
+    const action = JSON.parse(button.value).action;
+    const harness = openHarness();
+    const result = await handleGateClick({
+      ...click(harness, {
+        action,
+        stage: "srs",
+        reason: action === "approve" ? undefined : "Needs another pass.",
+      }),
+      actionId: button.action_id,
+      value: button.value,
+    });
+    assert.equal(result.status, expected[action].status, action);
+    assert.equal(result.decision.stage, "srs", action);
+    assert.equal(result.decision.action, action, action);
+    assert.equal(harness.state.merges.length, expected[action].merges, action);
+    assert.equal(harness.state.closes.length, expected[action].closes, action);
+  }
 });
 
 test("Slack signatures accept the fixture and reject a bad, missing, or stale signature", async () => {
@@ -211,6 +249,23 @@ test("Gate 1 request revision with a reason records it on the decision", async (
   assert.equal(done.decision.reason, "Add the missing acceptance row.");
   assert.equal(harness.state.closes.length, 0);
   assert.equal(harness.state.merges.length, 0);
+});
+
+test("Gate 3 request revision requires a reason", async () => {
+  const harness = openHarness();
+  const waiting = await handleGateClick(click(harness, { action: "revise", stage: "srs" }));
+  assert.equal(waiting.status, "needs-reason");
+  assert.equal(harness.state.closes.length, 0);
+  assert.equal(harness.state.merges.length, 0);
+});
+
+test("Gate 3 reject without a reason keeps the pull request open", async () => {
+  const harness = openHarness();
+  const waiting = await handleGateClick(click(harness, { action: "reject", stage: "srs" }));
+  assert.equal(waiting.status, "needs-reason");
+  assert.equal(harness.state.closes.length, 0);
+  assert.equal(harness.state.merges.length, 0);
+  assert.equal(harness.state.pulls[12].state, "open");
 });
 
 test("approve still completes without a reason", async () => {

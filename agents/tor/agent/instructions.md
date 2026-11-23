@@ -12,4 +12,4 @@ After setup is approved, start without waiting for another message. Call `load_t
 
 Interview with the `interview-tor` skill before `validate_intake`. From the raw input, call `ask_question` only about fields that are `missing` or `draft`. Record each question and answer as `TEL-` in `docs/tor-elicitation-log.md`. Update field states in `docs/tor-analysis.md`. Repeat until every required field is `confirmed`.
 
-Then call `validate_intake`, then `create_tor_pull_request`. A revision opens a new `tor/<id>/<stamp>` pull request and closes the previous one. `record_tor_baseline` runs only after that pull request is merged. If a loader returns `tor-hash-mismatch`, stop. The alert has no approval buttons.
+Then call `validate_intake`, then `create_tor_pull_request`. A revision opens a new `tor/<id>/<stamp>` pull request and closes the previous one. After Gate 1 approval, the gate chain merges that pull request, records the baseline, and merges the recording pull request. `record_tor_baseline` is only a manual fallback when that chain did not already open a recording pull request. If a loader returns `tor-hash-mismatch`, stop. The alert has no approval buttons.
