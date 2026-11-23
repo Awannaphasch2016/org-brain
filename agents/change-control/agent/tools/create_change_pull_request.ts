@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { slackUserIdFromAuth } from "../../../../lib/authz.mjs";
-import { changePullRequestCard, validateChangeReview } from "../../../../lib/change-review.mjs";
+import { changePullRequestCard, changePullRequestFiles, changeReviewValidationInput, validateChangeReview } from "../../../../lib/change-review.mjs";
 import { githubRepoFromEnv, openReviewedPullRequest } from "../../../../lib/github.mjs";
 import { loadChangeControlSources } from "../../../../lib/project-files.mjs";
 import { planStagePullRequest } from "../../../../lib/stage-gate.mjs";
@@ -32,24 +32,26 @@ export default defineTool({
     const root = `projects/${projectId}`;
     const review = (await sandbox.readTextFile({ path: `${root}/docs/change-review.md` })) ?? "";
     const revisedSrs = (await sandbox.readTextFile({ path: `${root}/docs/srs.md` })) || loaded.srsText;
-    const validation = validateChangeReview({
+    const revisedTraceability = await sandbox.readTextFile({ path: `${root}/docs/traceability.md` });
+    const validation = validateChangeReview(changeReviewValidationInput({
+      loaded,
       review,
-      originalSrs: loaded.srsText,
       revisedSrs,
-      torText: loaded.torText,
-      expectedTorSha256: loaded.torSha256,
+      revisedTraceability,
+    }));
+    const files = changePullRequestFiles({
+      projectId,
+      review,
+      revisedSrs,
+      revisedTraceability,
+      report: validation.report,
     });
-    const files = [
-      { path: `${root}/docs/change-review.md`, content: review },
-      { path: `${root}/docs/change-validation.md`, content: validation.report },
-      { path: `${root}/docs/srs.md`, content: revisedSrs },
-    ];
     const plan = planStagePullRequest({
       fixture: Boolean(fixture),
       validationOk: validation.ok,
       projectId,
       files,
-      allowedDocs: ["change-review.md", "change-validation.md", "srs.md"],
+      allowedDocs: files.map((file) => file.path.slice(`projects/${projectId}/docs/`.length)),
     });
     if (!plan.ok) throw new Error(plan.error);
     const { owner, repo } = githubRepoFromEnv();
