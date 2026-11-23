@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { actionsForStage } from "../lib/gate-actions.mjs";
 import { buildDecision, renderDecisionComment } from "../lib/gate-decision.mjs";
 import { mergeRecordingPullRequest } from "../lib/github.mjs";
 import { applyAgreedPlanHeader, planHeaderDiffAllowed } from "../lib/plan-header.mjs";
-import { planSha256, projectYamlForPlanPullRequest } from "../lib/plan-draft.mjs";
+import { planSha256 } from "../lib/plan-draft.mjs";
 import { openPlanDraft } from "../lib/plan-draft.mjs";
+import { renderStarterProjectYaml } from "../lib/project-setup.mjs";
 import { parseSimpleYaml } from "../lib/project-yaml.mjs";
 import { verifyGateDecision } from "../lib/gate-decision.mjs";
 import { evaluateRecordingPullRequest, renderRecordingReference } from "../lib/recording-pr.mjs";
@@ -83,18 +85,58 @@ test("branch prefix is project-plan/ not plan/", async () => {
   );
 });
 
-test("planner PR adds empty projectPlan block when missing", () => {
-  const result = projectYamlForPlanPullRequest("id: demo\nstatus: active\n");
-  assert.equal(result.include, true);
-  assert.equal(parseSimpleYaml(result.yaml).projectPlan.status, "none");
-  assert.equal(parseSimpleYaml(result.yaml).projectPlan.path, "docs/project-plan.md");
-});
-
-test("planner PR does not rewrite an existing projectPlan block", () => {
-  const yaml = `id: demo\nstatus: active\nprojectPlan:\n  path: docs/project-plan.md\n  status: none\n  pullRequest: null\n  branch: null\n  baseline:\n    mergeCommit: null\n    approvedAt: null\n    approvedBy: null\n    sha256: null\n    sourceTorCommit: null\n`;
-  const result = projectYamlForPlanPullRequest(yaml);
-  assert.equal(result.include, false);
-  assert.equal(result.yaml, yaml);
+test("plan pull request commits only the plan files", async () => {
+  const root = new URL(".", import.meta.url);
+  const plan = await readFile(new URL("../fixtures/test/p2-plan-complete/plan.md", root), "utf8");
+  const tor = await readFile(new URL("../fixtures/test/p2-plan-complete/tor.md", root), "utf8");
+  const elicitationLog = await readFile(new URL("../fixtures/test/p2-plan-complete/pel.md", root), "utf8");
+  const projectYaml = renderStarterProjectYaml({
+    id: "demo",
+    title: "Demo",
+    uploader: ACTOR,
+    uploadedAt: "2026-11-14T09:00:00.000Z",
+    slackFileId: "F123",
+    sourceSha256: "ab".repeat(32),
+    mediaType: "text/markdown",
+  });
+  const blobs = [];
+  const client = {
+    owner: "o",
+    repo: "r",
+    async request(method, path, options) {
+      const pathname = String(path);
+      if (method === "GET" && pathname.includes("/git/ref/heads/main")) return { object: { sha: BASE } };
+      if (method === "GET" && pathname.includes("/git/ref/heads/")) return null;
+      if (method === "GET" && pathname.includes("/git/commits/")) return { tree: { sha: "e".repeat(40) } };
+      if (method === "GET" && pathname.includes("/contents/")) return null;
+      if (method === "POST" && pathname.endsWith("/git/blobs")) {
+        blobs.push(options.body.content);
+        return { sha: "f".repeat(40) };
+      }
+      if (method === "POST" && pathname.endsWith("/git/trees")) return { sha: "1".repeat(40) };
+      if (method === "POST" && pathname.endsWith("/git/commits")) return { sha: HEAD };
+      if (method === "POST" && pathname.endsWith("/git/refs")) return {};
+      if (method === "PATCH") return {};
+      if (method === "POST" && pathname.endsWith("/pulls")) {
+        return { html_url: "https://github.com/o/r/pull/8", number: 8, head: { sha: HEAD } };
+      }
+      throw new Error(`${method} ${pathname}`);
+    },
+  };
+  const opened = await openPlanDraft(client, {
+    projectId: "demo",
+    branch: "project-plan/demo/20261114T080000Z",
+    plan,
+    tor,
+    elicitationLog,
+    baseBranch: "main",
+    grant: { agent: "project-planner", projectId: "demo", branchPrefix: "project-plan/demo/" },
+    projectYaml,
+  });
+  assert.equal(opened.addedProjectPlanBlock, false);
+  assert.equal(opened.projectYaml, projectYaml);
+  assert.equal(blobs.includes(projectYaml), false);
+  assert.deepEqual(blobs, [plan, elicitationLog, "", "pass\n"]);
 });
 
 test("baseline hashes plan bytes after the allowed §1 recording edit", () => {
@@ -272,7 +314,15 @@ test("reject draft closes the plan PR, leaves the project active, and leaves pro
   assert.equal(done.status, "reject-draft");
   assert.equal(done.decision.reason, "Start again.");
   assert.deepEqual(harness.state.closes, [12]);
-  const yaml = projectYamlForPlanPullRequest("id: demo\nstatus: active\n").yaml;
+  const yaml = renderStarterProjectYaml({
+    id: "demo",
+    title: "Demo",
+    uploader: ACTOR,
+    uploadedAt: "2026-11-14T09:00:00.000Z",
+    slackFileId: "F123",
+    sourceSha256: "ab".repeat(32),
+    mediaType: "text/markdown",
+  });
   const project = parseSimpleYaml(yaml);
   assert.equal(project.status, "active");
   assert.equal(project.projectPlan.status, "none");

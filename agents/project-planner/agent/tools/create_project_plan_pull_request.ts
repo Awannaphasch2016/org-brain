@@ -19,7 +19,7 @@ async function readOptional(
 
 export default defineTool({
   description:
-    "Open a project-plan/<id>/<stamp> pull request after validation passes. Adds an empty projectPlan block when project.yaml does not have one. Never merges.",
+    "Open a project-plan/<id>/<stamp> pull request after validation passes. Commits the plan files only. Never merges.",
   inputSchema: z.object({
     projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     title: z.string().optional(),

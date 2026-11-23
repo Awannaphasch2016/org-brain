@@ -157,7 +157,7 @@ test("hash mismatch returns stop", async () => {
 });
 
 test("old-format project.yaml (task-tracker-lite) is refused", async () => {
-  const yaml = await read("projects/task-tracker-lite/project.yaml");
+  const yaml = await read("fixtures/test/task-tracker-lite/project.yaml");
   const sha = "a".repeat(40);
   const { client, calls } = repoClient({
     branches: { main: sha },
