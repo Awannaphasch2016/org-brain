@@ -10,6 +10,7 @@ import {
 } from "../lib/gate-decision.mjs";
 import { signSlackRequest, verifySlackRequestSignature } from "../lib/slack-signature.mjs";
 import { actorFromUsersInfo, handleGateClick, handleReasonReply, renderGateCard } from "../lib/slack-gate.mjs";
+import { maybeStartTorAfterGate } from "../lib/tor-interview.mjs";
 import { IDENTITY, gateGithub, pullFixture } from "./gate-harness.mjs";
 
 const SECRET = "test-signing-secret";
@@ -137,6 +138,33 @@ test("approve records the human commits and merges the pinned head once", async 
   const second = await handleGateClick(click(harness));
   assert.notEqual(second.status, "approved");
   assert.equal(harness.state.merges.length, 1);
+});
+
+test("setup approval starts one TOR turn and reject starts none", async () => {
+  const harness = openHarness();
+  const started = new Set();
+  const approved = await handleGateClick(click(harness, { stage: "setup" }));
+  const follow = maybeStartTorAfterGate("tor", approved, started);
+  assert.equal(approved.status, "approved");
+  assert.equal(follow.firstTool, "load_tor_workspace");
+  assert.equal(follow.projectId, "demo");
+  assert.equal(follow.pr, 12);
+  assert.equal(follow.headSha, HEAD);
+  assert.match(harness.state.comments[12].at(-1).body, new RegExp(`"pr": 12`));
+  assert.match(harness.state.comments[12].at(-1).body, new RegExp(HEAD));
+  assert.equal(harness.state.merges.length, 1);
+  assert.equal(harness.state.merges[0].body.sha, HEAD);
+  assert.match(harness.state.merges[0].body.commit_message, /factory\[bot\]/);
+  assert.equal(maybeStartTorAfterGate("tor", approved, started), null);
+  const replay = await handleGateClick(click(harness, { stage: "setup" }));
+  assert.notEqual(replay.status, "approved");
+  assert.equal(maybeStartTorAfterGate("tor", replay, started), null);
+  assert.equal(harness.state.merges.length, 1);
+  const rejectedHarness = openHarness();
+  const rejected = await handleGateClick(click(rejectedHarness, { stage: "setup", action: "reject", reason: "Stop." }));
+  assert.equal(rejected.status, "rejected");
+  assert.equal(maybeStartTorAfterGate("tor", rejected, new Set()), null);
+  assert.equal(rejectedHarness.state.merges.length, 0);
 });
 
 test("Gate 1 reject without a reason is refused", async () => {

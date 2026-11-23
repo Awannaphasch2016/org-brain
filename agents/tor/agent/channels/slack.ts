@@ -2,10 +2,11 @@ import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { factoryConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
+import { torAnswerResult, torInboundResult } from "../../../../lib/tor-slack.mjs";
 import { createGateGithubClient } from "../../../specification/agent/lib/github-token.js";
 
 const THREAD_GUIDANCE =
-  "You are continuing a TOR setup thread. Reply only when the message continues that work. Otherwise call no_reply.";
+  "You are continuing a TOR setup and interview thread. Reply only when the message continues setup or the TOR interview. Otherwise call no_reply.";
 
 function allowUser(userId: string | undefined) {
   const allow = factoryConfig.allowedUserIds;
@@ -38,21 +39,30 @@ export default slackChannel({
     if (message.raw.channel_type === "im") return null;
     if (!allowUser(message.author.userId) || !allowChannel(message.channelId)) return null;
     if (await gate.consumeReasonReply(ctx, message)) return null;
-    if (factoryConfig.status !== "approved") return null;
-    const auth = defaultSlackAuth(message, ctx);
-    if (!auth) return null;
-    if (ctx.isBotMentioned()) return { auth };
     const inThread = message.threadTs !== message.ts;
-    if (ctx.edit || (inThread && (await ctx.isSubscribed()))) {
-      return { auth, status: "deferred" as const, guidance: THREAD_GUIDANCE };
-    }
-    return null;
+    return torInboundResult({
+      isBot: false,
+      channelType: message.raw.channel_type,
+      allowedUser: true,
+      allowedChannel: true,
+      consumedReason: false,
+      approved: factoryConfig.status === "approved",
+      auth: defaultSlackAuth(message, ctx),
+      botMentioned: ctx.isBotMentioned(),
+      edit: Boolean(ctx.edit),
+      inThread,
+      subscribed: inThread ? await ctx.isSubscribed() : false,
+      guidance: THREAD_GUIDANCE,
+    });
   },
   onMessageEdited() {
     return null;
   },
   onAnswers(ctx, submission) {
-    if (!allowUser(submission.user.id) || !allowChannel(ctx.slack.channelId)) return null;
-    return { auth: ctx.defaultAuth };
+    return torAnswerResult({
+      allowedUser: allowUser(submission.user.id),
+      allowedChannel: allowChannel(ctx.slack.channelId),
+      auth: ctx.defaultAuth,
+    });
   },
 });
