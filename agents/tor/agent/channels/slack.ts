@@ -2,6 +2,7 @@ import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { factoryConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
+import { dispatchSpecificationInbound, loadOrchestratorProject, projectIdFromSlackText } from "../../../../lib/orchestrator.mjs";
 import { torAnswerResult, torInboundResult } from "../../../../lib/tor-slack.mjs";
 import { createGateGithubClient } from "../../../specification/agent/lib/github-token.js";
 
@@ -39,6 +40,16 @@ export default slackChannel({
     if (message.raw.channel_type === "im") return null;
     if (!allowUser(message.author.userId) || !allowChannel(message.channelId)) return null;
     if (await gate.consumeReasonReply(ctx, message)) return null;
+    const projectId = projectIdFromSlackText(message.text);
+    if (projectId) {
+      try {
+        const projectState = await loadOrchestratorProject(await createGateGithubClient(), projectId);
+        const dispatched = projectState ? dispatchSpecificationInbound({ projectState, text: message.text }) : null;
+        if (dispatched && dispatched.agent !== "tor") return null;
+      } catch {
+        // Fall through to the TOR handler when the project cannot be loaded.
+      }
+    }
     const inThread = message.threadTs !== message.ts;
     return torInboundResult({
       isBot: false,

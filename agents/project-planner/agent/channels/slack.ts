@@ -2,6 +2,7 @@ import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { gateApproverIds } from "../../../../lib/gate-actions.mjs";
 import { factoryConfig } from "../../../../generated/config.js";
+import { dispatchSpecificationInbound, loadOrchestratorProject, projectIdFromSlackText } from "../../../../lib/orchestrator.mjs";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
 import { createGateGithubClient } from "../../../specification/agent/lib/github-token.js";
 
@@ -42,6 +43,16 @@ export default slackChannel({
     if (message.raw.channel_type === "im") return null;
     if (!allowUser(message.author.userId) || !allowChannel(message.channelId)) return null;
     if (await gate.consumeReasonReply(ctx, message)) return null;
+    const projectId = projectIdFromSlackText(message.text);
+    if (projectId) {
+      try {
+        const projectState = await loadOrchestratorProject(await createGateGithubClient(), projectId);
+        const dispatched = projectState ? dispatchSpecificationInbound({ projectState, text: message.text }) : null;
+        if (dispatched && dispatched.agent !== "project-planner") return null;
+      } catch {
+        // Fall through when the project cannot be loaded.
+      }
+    }
     if (factoryConfig.status !== "approved") return null;
     const auth = defaultSlackAuth(message, ctx);
     if (!auth) return null;

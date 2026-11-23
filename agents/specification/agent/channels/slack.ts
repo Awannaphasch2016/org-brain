@@ -2,6 +2,7 @@ import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { specificationConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
+import { dispatchSpecificationInbound, loadOrchestratorProject, projectIdFromSlackText } from "../../../../lib/orchestrator.mjs";
 import { createGateGithubClient } from "../lib/github-token.js";
 
 export { postSrsGateCard } from "../../../../lib/srs-gate.mjs";
@@ -43,6 +44,22 @@ export default slackChannel({
     if (specificationConfig.status !== "approved") return null;
     const auth = defaultSlackAuth(message, ctx);
     if (!auth) return null;
+    const projectId = projectIdFromSlackText(message.text);
+    if (projectId) {
+      try {
+        const projectState = await loadOrchestratorProject(await createGateGithubClient(), projectId);
+        if (projectState) {
+          const dispatched = dispatchSpecificationInbound({ projectState, text: message.text });
+          if (!dispatched.agent) return null;
+          if (dispatched.agent !== "specification" && dispatched.prompt) {
+            await ctx.send(dispatched.prompt);
+            return null;
+          }
+        }
+      } catch {
+        // Keep the existing specification turn when the project cannot be loaded.
+      }
+    }
     if (ctx.isBotMentioned()) return { auth };
     const inThread = message.threadTs !== message.ts;
     if (ctx.edit || (inThread && (await ctx.isSubscribed()))) {

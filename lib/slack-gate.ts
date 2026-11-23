@@ -34,9 +34,9 @@ async function post(ctx: SlackInteractionContext | SlackInboundMessageContext, p
 
 /**
  * Shared gate handlers for every agent's Slack channel.
- * This is not a shared HTTP router. Each agent still has its own `/eve/<agent>/v1/slack`
- * URL, and the Slack app can point at only one of them. Whichever URL receives the
- * signed webhook runs this same handler.
+ * Phase 1–3 inbound messages on the specification Slack URL are dispatched by
+ * lib/orchestrator.mjs. Phase 4 and later agents still have their own
+ * `/eve/<agent>/v1/slack` URLs. The Slack app points at one of them.
  */
 export function createSlackGate(options: SlackGateOptions) {
   return {
@@ -103,6 +103,10 @@ export function createSlackGate(options: SlackGateOptions) {
                 env: process.env,
               });
               for (const notice of chain.notices ?? []) await post(ctx, notice);
+              for (const item of chain.handoff?.posts ?? []) {
+                await post(ctx, { text: item.text });
+                await ctx.send(item.text);
+              }
             } catch (error) {
               console.error(`[slack-gate] agent=${options.agent} recording ${scrub(error)}`);
               try {

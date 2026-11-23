@@ -1,5 +1,7 @@
 # Prototypes
 
+23 Nov 2026: this file records the earlier per-agent Slack routes. Phase 1–3 routing now lives in the root README and `lib/orchestrator.mjs`. The live request URL is unchanged.
+
 Each stage is its own Eve workspace agent. `agents/factory/` is reserved and is not implemented.
 
 | Prototype | Agent | Slack route |

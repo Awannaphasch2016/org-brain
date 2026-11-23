@@ -278,6 +278,62 @@ test("load_project leaves a different local SRS draft unchanged", async () => {
   assert.equal(written["projects/demo/project.yaml"], "id: demo\n");
 });
 
+test("runApprovedGateChain starts the next agent from the durable transition record", async () => {
+  const torYaml = `id: demo
+status: active
+tor:
+  status: approved
+projectPlan:
+  status: none
+srs:
+  status: none
+`;
+  const planYaml = `id: demo
+status: active
+tor:
+  status: approved
+projectPlan:
+  status: approved
+srs:
+  status: none
+`;
+  const tor = chainClient({ projectYaml: torYaml, ci: "success" });
+  const torResult = await runApprovedGateChain({
+    client: tor.client,
+    decision: decision("tor"),
+    allowedUserIds: ["U0CFRUV378D"],
+    signingSecret: "test-signing-secret",
+    recordBaseline: async () => ({ number: 31 }),
+    mergeRecording: async () => {
+      tor.pulls[31].merged = true;
+    },
+  });
+  assert.equal(torResult.status, "transitioned");
+  assert.equal(torResult.event.next, "project-planner");
+  assert.equal(torResult.handoff.agent, "project-planner");
+  assert.equal(torResult.handoff.posts.length, 1);
+  assert.equal(torResult.handoff.posts[0].source, "gate-event");
+  assert.equal(torResult.handoff.messages.some((message) => message.role === "user"), false);
+  assert.equal(torResult.handoff.event.kind, TRANSITION_KIND);
+
+  const plan = chainClient({ projectYaml: planYaml, ci: "success" });
+  const planResult = await runApprovedGateChain({
+    client: plan.client,
+    decision: decision("project-plan"),
+    allowedUserIds: ["U0CFRUV378D"],
+    signingSecret: "test-signing-secret",
+    recordBaseline: async () => ({ number: 31 }),
+    mergeRecording: async () => {
+      plan.pulls[31].merged = true;
+    },
+  });
+  assert.equal(planResult.status, "transitioned");
+  assert.equal(planResult.event.next, "specification");
+  assert.equal(planResult.handoff.agent, "specification");
+  assert.equal(planResult.handoff.posts.length, 1);
+  assert.equal(planResult.handoff.messages.some((message) => message.role === "user"), false);
+});
+
 test("Phase 1-3 tools no longer prompt and the later phases still do", async () => {
   const removed = {
     "agents/tor/agent/tools/create_tor_pull_request.ts": "Gate 1 card",
@@ -339,7 +395,7 @@ function decision(stage) {
   };
 }
 
-function chainClient({ comments = [], ci = "pending" } = {}) {
+function chainClient({ comments = [], ci = "pending", projectYaml = "" } = {}) {
   const state = {
     clock: 0,
     ci,
@@ -386,6 +442,10 @@ function chainClient({ comments = [], ci = "pending" } = {}) {
       const pull = path.match(/\/pulls\/(\d+)$/);
       if (method === "GET" && pull) return state.pulls[Number(pull[1])];
       if (method === "GET" && path.includes("/status")) return { state: state.ci === "success" ? "success" : "pending" };
+      if (projectYaml && method === "GET" && path === "/repos/o/r") return { default_branch: "main" };
+      if (projectYaml && method === "GET" && path.includes("/contents/projects/demo/project.yaml")) {
+        return { encoding: "base64", content: Buffer.from(projectYaml).toString("base64") };
+      }
       if (method === "GET" && path.includes("/check-runs")) {
         return {
           check_runs: [
