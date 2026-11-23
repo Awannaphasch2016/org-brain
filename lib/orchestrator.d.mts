@@ -12,8 +12,11 @@ export function phaseSessionFromThread(messages: readonly { text?: string; body?
 export function deliverPhaseOutput(input: {
   binding?: string | null;
   reply?: string | null;
+  question?: { interactionId: string; prompt?: string; options?: readonly { id: string; label?: string }[] } | null;
+  agent?: string | null;
+  sessionId?: string | null;
   threadTs?: string | null;
-  post: (payload: { text: string; threadTs?: string | null }) => Promise<unknown> | unknown;
+  post: (payload: { text: string; blocks?: Record<string, any>[]; threadTs?: string | null }) => Promise<unknown> | unknown;
 }): Promise<void>;
 
 export function handleSpecificationInbound(input: {
@@ -22,8 +25,9 @@ export function handleSpecificationInbound(input: {
   threadMessages?: readonly { text?: string; body?: string }[];
   startAgent?: (input: { agent: string; message: string }) => Promise<{ agent: string; sessionId: string; tool: string }>;
   continueAgent?: (input: { agent: string; sessionId: string; message: string }) => Promise<{ agent: string; sessionId: string; tool: string }>;
-  readReply?: (invoked: { agent: string; sessionId: string }) => Promise<string>;
+  readReply?: (invoked: { agent: string; sessionId: string }) => Promise<string | { reply?: string | null; question?: { interactionId: string; prompt?: string; options?: readonly { id: string; label?: string }[] } | null }>;
   recordSession?: (record: { pr?: number; idempotencyKey?: string; projectId?: string; agent?: string; sessionId?: string }) => Promise<{ agent?: string; sessionId?: string } | null>;
+  actor?: { userId: string; teamId?: string | null; channelId?: string | null; threadTs?: string | null } | null;
   requestUrl?: string;
 }): Promise<{
   agent: string | null;
@@ -32,6 +36,7 @@ export function handleSpecificationInbound(input: {
   invoked: { agent: string; sessionId: string; tool: string } | null;
   resumed?: boolean;
   reply?: string | null;
+  question?: { interactionId: string; prompt?: string; options?: readonly { id: string; label?: string }[] } | null;
   binding?: string | null;
 }>;
 

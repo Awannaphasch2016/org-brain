@@ -4,7 +4,8 @@ import { specificationConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
 import { rememberPhaseSession } from "../../../../lib/gate-chain.mjs";
 import { deliverPhaseOutput, dispatchSpecificationInbound, handleSpecificationInbound, loadOrchestratorProject, phaseSessionFromThread, projectIdFromSlackText, projectIdFromThread } from "../../../../lib/orchestrator.mjs";
-import { continuePhaseSession, readPhaseReply, startPhaseAgent } from "../../../../lib/phase-hop.mjs";
+import { phaseAnswerFromAction } from "../../../../lib/phase-actor.mjs";
+import { answerPhaseSession, continuePhaseSession, readPhaseReply, startPhaseAgent } from "../../../../lib/phase-hop.mjs";
 import { createGateGithubClient } from "../lib/github-token.js";
 
 export { postSrsGateCard } from "../../../../lib/srs-gate.mjs";
@@ -34,7 +35,26 @@ export default slackChannel({
   credentials: process.env.SLACK_CONNECTOR
     ? connectSlackCredentials(process.env.SLACK_CONNECTOR)
     : undefined,
-  onInteraction: (action, ctx) => gate.onInteraction(action, ctx),
+  onInteraction: async (action, ctx) => {
+    const answer = phaseAnswerFromAction(action);
+    if (answer) {
+      if (!allowUser(action.user.id) || !allowChannel(ctx.slack.channelId)) return;
+      await answerPhaseSession({
+        agent: answer.agent,
+        sessionId: answer.sessionId,
+        interactionId: answer.interactionId,
+        optionId: answer.optionId,
+        actor: {
+          userId: action.user.id,
+          teamId: ctx.slack.teamId,
+          channelId: ctx.slack.channelId,
+          threadTs: ctx.slack.threadTs,
+        },
+      });
+      return;
+    }
+    return gate.onInteraction(action, ctx);
+  },
   async onDirectMessage() {
     return null;
   },
@@ -61,10 +81,17 @@ export default slackChannel({
           const routed = dispatchSpecificationInbound({ projectState, text: message.text });
           const bound = phaseSessionFromThread(threadMessages);
           if ((routed.agent && routed.agent !== "specification") || bound?.sessionId || (bound?.agent && bound.agent !== "specification")) {
+            const actor = {
+              userId: message.author.userId,
+              teamId: ctx.slack.teamId,
+              channelId: ctx.slack.channelId,
+              threadTs: ctx.slack.threadTs,
+            };
             const outcome = await handleSpecificationInbound({
               projectState,
               text: message.text,
               threadMessages,
+              actor,
               startAgent: startPhaseAgent,
               continueAgent: continuePhaseSession,
               readReply: readPhaseReply,
@@ -74,13 +101,18 @@ export default slackChannel({
               await deliverPhaseOutput({
                 binding: outcome.binding,
                 reply: outcome.reply,
+                question: outcome.question,
+                agent: outcome.invoked?.agent,
+                sessionId: outcome.invoked?.sessionId,
                 threadTs: ctx.slack.threadTs,
                 post: async (payload) => {
-                  await ctx.slack.request("chat.postMessage", {
+                  const body: Record<string, unknown> = {
                     channel: ctx.slack.channelId,
                     thread_ts: payload.threadTs ?? ctx.slack.threadTs,
                     text: payload.text,
-                  });
+                  };
+                  if (payload.blocks && payload.blocks.length > 0) body.blocks = payload.blocks;
+                  await ctx.slack.request("chat.postMessage", body);
                 },
               });
               return null;

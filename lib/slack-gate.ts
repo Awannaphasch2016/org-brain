@@ -4,6 +4,7 @@ import { actionNeedsReason } from "./gate-actions.mjs";
 import { renderGateReasonModal } from "./gate-reason.mjs";
 import { actorFromUsersInfo, handleGateClick, handleReasonReply, parseGateButtonValue } from "./slack-gate.mjs";
 import { deferGateChain, runApprovedGateChain } from "./gate-chain.mjs";
+import { actorFromDecision } from "./phase-actor.mjs";
 import { deliverPhaseOutput } from "./orchestrator.mjs";
 import { readPhaseReply } from "./phase-hop.mjs";
 
@@ -99,6 +100,8 @@ export function createSlackGate(options: SlackGateOptions) {
                 signingSecret: process.env.SLACK_SIGNING_SECRET,
                 env: process.env,
                 threadTs: ctx.slack.threadTs,
+                channelId: ctx.slack.channelId,
+                actor: actorFromDecision(decision, { channelId: ctx.slack.channelId, threadTs: ctx.slack.threadTs }),
                 readReply: (invoked: { agent: string; sessionId: string }) => readPhaseReply({
                   agent: invoked.agent,
                   sessionId: invoked.sessionId,
@@ -109,6 +112,9 @@ export function createSlackGate(options: SlackGateOptions) {
               await deliverPhaseOutput({
                 binding: chain.handoff?.binding,
                 reply: chain.handoff?.reply,
+                question: chain.handoff?.question,
+                agent: chain.handoff?.invoked?.agent,
+                sessionId: chain.handoff?.invoked?.sessionId,
                 threadTs: ctx.slack.threadTs,
                 post: (payload: GatePost & { threadTs?: string | null }) => post(ctx, payload),
               });
