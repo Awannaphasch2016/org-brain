@@ -3,9 +3,9 @@ import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { specificationConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
 import { rememberPhaseSession } from "../../../../lib/gate-chain.mjs";
-import { deliverPhaseOutput, dispatchSpecificationInbound, handleSpecificationInbound, loadOrchestratorProject, phaseSessionFromThread, projectIdFromSlackText, projectIdFromThread } from "../../../../lib/orchestrator.mjs";
+import { deliverAnsweredPhase, deliverPhaseOutput, dispatchSpecificationInbound, handleSpecificationInbound, loadOrchestratorProject, phaseSessionFromThread, projectIdFromSlackText, projectIdFromThread } from "../../../../lib/orchestrator.mjs";
 import { phaseAnswerFromAction } from "../../../../lib/phase-actor.mjs";
-import { answerPhaseSession, continuePhaseSession, readPhaseReply, startPhaseAgent } from "../../../../lib/phase-hop.mjs";
+import { continuePhaseSession, readPhaseReply, startPhaseAgent } from "../../../../lib/phase-hop.mjs";
 import { createGateGithubClient } from "../lib/github-token.js";
 
 export { postSrsGateCard } from "../../../../lib/srs-gate.mjs";
@@ -39,19 +39,26 @@ export default slackChannel({
     const answer = phaseAnswerFromAction(action);
     if (answer) {
       if (!allowUser(action.user.id) || !allowChannel(ctx.slack.channelId)) return;
-      await answerPhaseSession({
-        agent: answer.agent,
-        sessionId: answer.sessionId,
-        interactionId: answer.interactionId,
-        optionId: answer.optionId,
+      // Eve schedules onInteraction with waitUntil and returns Slack's ack first.
+      return deliverAnsweredPhase({
+        answer,
+        threadTs: ctx.slack.threadTs,
         actor: {
           userId: action.user.id,
           teamId: ctx.slack.teamId,
           channelId: ctx.slack.channelId,
           threadTs: ctx.slack.threadTs,
         },
-      });
-      return;
+        post: async (payload) => {
+          const body: Record<string, unknown> = {
+            channel: ctx.slack.channelId,
+            thread_ts: payload.threadTs ?? ctx.slack.threadTs,
+            text: payload.text,
+          };
+          if (payload.blocks && payload.blocks.length > 0) body.blocks = payload.blocks;
+          await ctx.slack.request("chat.postMessage", body);
+        },
+      }).then(() => undefined);
     }
     return gate.onInteraction(action, ctx);
   },

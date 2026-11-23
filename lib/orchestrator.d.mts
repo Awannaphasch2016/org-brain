@@ -9,6 +9,16 @@ export function projectIdFromThread(messages: readonly { text?: string; body?: s
 
 export function phaseSessionFromThread(messages: readonly { text?: string; body?: string }[] | undefined): Record<string, any> | null;
 
+export function deliverAnsweredPhase(input: {
+  answer: { agent: string; sessionId: string; interactionId: string; optionId: string };
+  actor?: { userId: string; teamId?: string | null; channelId?: string | null; threadTs?: string | null } | null;
+  threadTs?: string | null;
+  post: (payload: { text: string; blocks?: Record<string, any>[]; threadTs?: string | null }) => Promise<unknown> | unknown;
+  env?: Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  auth?: Record<string, string>;
+}): Promise<{ reply: string; question: { interactionId: string; prompt?: string; options?: { id: string; label?: string }[] } | null }>;
+
 export function deliverPhaseOutput(input: {
   binding?: string | null;
   reply?: string | null;

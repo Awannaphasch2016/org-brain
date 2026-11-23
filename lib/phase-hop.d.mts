@@ -45,6 +45,18 @@ export function continuePhaseSession(input: {
   url: string;
 }>;
 
+export function readPhaseFollowUp(input: {
+  agent: string;
+  sessionId: string;
+  answeredInteractionId: string;
+  env?: Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  auth?: Record<string, string>;
+}): Promise<{
+  reply: string;
+  question: { interactionId: string; prompt: string; options: { id: string; label: string }[] } | null;
+}>;
+
 export function readPhaseReply(input: {
   agent: string;
   sessionId: string;

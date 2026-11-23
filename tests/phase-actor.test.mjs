@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, createSign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { vercelOidc } from "eve/channels/auth";
@@ -7,7 +8,7 @@ import { slackUserIdFromAuth } from "../lib/authz.mjs";
 import { GithubClient } from "../lib/github.mjs";
 import { loadProjectFiles } from "../lib/project-files.mjs";
 import { actorFromDecision, forwardedSlackPrincipal, phaseAnswerFromAction, phaseTrustedForwarders, renderPhaseQuestion } from "../lib/phase-actor.mjs";
-import { deliverPhaseOutput } from "../lib/orchestrator.mjs";
+import { deliverAnsweredPhase, deliverPhaseOutput } from "../lib/orchestrator.mjs";
 import { answerPhaseSession, readPhaseReply, startPhaseAgent } from "../lib/phase-hop.mjs";
 
 const ANAK = "U0CFRUV378D";
@@ -133,18 +134,106 @@ test("the phase eve channels use vercelOidc() as their only OIDC route-auth acce
 });
 
 test("vercelOidc() rejects a token with the wrong audience", async () => {
-  const authenticate = vercelOidc();
-  const token = unsignedJwt({
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const claims = {
     iss: ISSUER,
-    aud: "https://evil.example/anak2",
     sub: "owner:anak2:project:org-brain:environment:production",
     project_id: PROJECT,
     environment: "production",
-  });
-  const request = new Request("https://factory.example/eve/tor/v1/session", {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  assert.equal(await authenticate(request), null);
+  };
+  const authenticate = vercelOidc();
+  const fetches = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    fetches.push(String(url));
+    return new Response("discovery unavailable", { status: 503 });
+  };
+  try {
+    const wrong = await authenticate(bearerRequest(signJwt(privateKey, { ...claims, aud: "https://evil.example/anak2" })));
+    assert.equal(wrong, null);
+    assert.deepEqual(fetches, []);
+    const rightAudience = await authenticate(bearerRequest(signJwt(privateKey, { ...claims, aud: "https://vercel.com/anak2" })));
+    assert.equal(rightAudience, null);
+    assert.equal(fetches.length > 0, true);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("a phase answer click delivers the next turn after the Slack ack", async () => {
+  const starter = "U1111111111";
+  const clicker = "U2222222222";
+  const allowed = [starter, clicker];
+  assert.notEqual(clicker, starter);
+  assert.equal(allowed.includes(clicker), true);
+  const slack = await readFile(new URL("../agents/specification/agent/channels/slack.ts", import.meta.url), "utf8");
+  const handler = slack.slice(slack.indexOf("onInteraction"));
+  const allowAt = handler.indexOf("allowUser(action.user.id)");
+  const deliverAt = handler.indexOf("return deliverAnsweredPhase(");
+  assert.equal(allowAt > 0 && deliverAt > allowAt, true);
+  const interactions = await readFile(new URL("../node_modules/eve/dist/src/public/channels/slack/interactions.js", import.meta.url), "utf8");
+  const scheduledAt = interactions.indexOf("t.waitUntil(dispatchCustomInteractions");
+  const ackAt = interactions.indexOf("return r", scheduledAt);
+  assert.equal(scheduledAt > 0 && ackAt > scheduledAt, true);
+
+  const env = { VERCEL_URL: "factory.example" };
+  const auth = { authorization: "Bearer test" };
+  const calls = [];
+  let transcript = interviewTranscript("ask-2");
+  const fetchImpl = async (url, init = {}) => {
+    const method = String(init.method ?? "GET").toUpperCase();
+    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : null });
+    if (method === "POST") return { ok: true, async json() { return { sessionId: "sess-tor", deliveryId: "d-answer" }; } };
+    return factStream(transcript);
+  };
+  const posts = [];
+  let acked = false;
+  let scheduled;
+  const waitUntil = (task) => { scheduled = task; };
+  waitUntil(deliverAnsweredPhase({
+    answer: { agent: "tor", sessionId: "sess-tor", interactionId: "ask-1", optionId: "track" },
+    actor: { userId: clicker, teamId: "T1", channelId: "C1", threadTs: "1.2" },
+    threadTs: "1.2",
+    env,
+    auth,
+    fetchImpl,
+    post: async (payload) => posts.push(payload),
+  }));
+  acked = true;
+  assert.equal(acked, true);
+  assert.equal(posts.length, 0);
+  assert.equal(calls.length, 0);
+  await scheduled;
+  assert.equal(calls[0].url, "https://factory.example/eve/tor/v1/session/sess-tor");
+  assert.deepEqual(calls[0].body.answers, [{ interactionId: "ask-1", optionId: "track" }]);
+  assert.equal(calls[0].body.forwardedPrincipal.current.attributes.user_id, clicker);
+  assert.notEqual(calls[0].body.forwardedPrincipal.current.attributes.user_id, starter);
+  assert.equal(posts[0].threadTs, "1.2");
+  assert.equal(posts[0].blocks[0].text.text, "How large is the team?");
+  assert.equal(calls.some((call) => call.method === "GET" && call.url.endsWith("/sess-tor/stream")), true);
+
+  transcript = interviewTranscript("settled");
+  const secondPosts = [];
+  let second;
+  waitUntil(deliverAnsweredPhase({
+    answer: { agent: "tor", sessionId: "sess-tor", interactionId: "ask-2", optionId: "small" },
+    actor: { userId: clicker, teamId: "T1", channelId: "C1", threadTs: "1.2" },
+    threadTs: "1.2",
+    env,
+    auth,
+    fetchImpl,
+    post: async (payload) => secondPosts.push(payload),
+  }));
+  assert.equal(secondPosts.length, 0);
+  second = await scheduled;
+  assert.equal(second.reply, "TOR drafted.");
+  assert.equal(second.question, null);
+  assert.equal(secondPosts[0].threadTs, "1.2");
+  assert.equal(secondPosts[0].text, "TOR drafted.");
+  const answers = calls.filter((call) => call.method === "POST");
+  assert.equal(answers.length, 2);
+  assert.deepEqual(answers[1].body.answers, [{ interactionId: "ask-2", optionId: "small" }]);
+  assert.equal(answers.every((call) => call.body.forwardedPrincipal.current.attributes.user_id === clicker), true);
 });
 
 test("the predicate rejects another project, environment, or issuer", () => {
@@ -254,9 +343,64 @@ function restoreEnv(name, value) {
   else process.env[name] = value;
 }
 
-function unsignedJwt(payload) {
+function signJwt(privateKey, payload) {
   const part = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  return `${part({ alg: "none", typ: "JWT" })}.${part(payload)}.sig`;
+  const data = `${part({ alg: "RS256", typ: "JWT" })}.${part(payload)}`;
+  const signature = createSign("RSA-SHA256").update(data).sign(privateKey).toString("base64url");
+  return `${data}.${signature}`;
+}
+
+function bearerRequest(token) {
+  return new Request("https://factory.example/eve/tor/v1/session", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+function interviewTranscript(stage) {
+  const facts = [
+    questionFact("ask-1", "What is the objective?", [{ id: "track", label: "Track tasks" }]),
+    { type: "turn.paused", data: { awaiting: [{ interactionId: "ask-1" }] } },
+  ];
+  if (stage === "ask-2" || stage === "settled") {
+    facts.push(
+      questionFact("ask-2", "How large is the team?", [{ id: "small", label: "Small" }]),
+      { type: "turn.paused", data: { awaiting: [{ interactionId: "ask-2" }] } },
+    );
+  }
+  if (stage === "settled") {
+    facts.push(
+      { type: "content.completed", data: { kind: "text", phase: "reply", value: "TOR drafted." } },
+      { type: "turn.settled", data: { outcome: "completed" } },
+    );
+  }
+  return facts;
+}
+
+function questionFact(interactionId, prompt, options) {
+  return {
+    type: "interaction.opened",
+    data: { interactionId, subject: { callId: "call-1" }, request: { kind: "question", prompt, options } },
+  };
+}
+
+function factStream(facts) {
+  const encoded = new TextEncoder().encode(`${JSON.stringify({ at: "2026-11-23T00:00:00.000Z", facts })}\n`);
+  return {
+    ok: true,
+    body: {
+      getReader() {
+        let sent = false;
+        return {
+          async read() {
+            if (sent) return { done: true, value: undefined };
+            sent = true;
+            return { done: false, value: encoded };
+          },
+          async cancel() { sent = true; },
+        };
+      },
+    },
+  };
 }
 
 function questionStream() {
