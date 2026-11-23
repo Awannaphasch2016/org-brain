@@ -30,6 +30,8 @@ export interface ProjectLoad {
   srsText?: string;
   srsSha256?: string;
   srsMergeCommit?: string;
+  traceabilityPath?: string;
+  traceabilityText?: string;
 }
 
 export function loadProjectFiles(

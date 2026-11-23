@@ -12,13 +12,13 @@ In scope: recording and viewing team tasks. Out of scope: external customer acce
 
 The product shall let a team member create a task with a title and description.
 
-Source: TOR 3.1
+Source: IS-001
 
 ### FR-002
 
 The product shall let an authorized user update task status. Allowed status values are open and done.
 
-Source: TOR 3.3
+Source: IS-002
 
 # Nonfunctional Requirements
 
@@ -26,7 +26,7 @@ Source: TOR 3.3
 
 The product shall persist task information between sessions.
 
-Source: TOR 3.1
+Source: IS-001
 
 # Acceptance Criteria
 

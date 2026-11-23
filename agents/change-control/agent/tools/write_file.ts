@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { writeFile } from "eve/tools/write_file";
 import { assessWrite } from "../../../../lib/write-policy.mjs";
 
-const allowedDocs = ["change-review.md", "change-validation.md", "srs.md"];
+const allowedDocs = ["change-review.md", "change-validation.md", "srs.md", "traceability.md"];
 
 export default defineTool({
   ...writeFile,

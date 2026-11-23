@@ -26,6 +26,7 @@ const PROJECT = "p1-new-format";
 const YAML_PATH = `projects/${PROJECT}/project.yaml`;
 const TOR_PATH = `projects/${PROJECT}/docs/tor.md`;
 const SRS_PATH = `projects/${PROJECT}/docs/srs.md`;
+const TRACE_PATH = `projects/${PROJECT}/docs/traceability.md`;
 
 test("loader reads at a branch, a pull request head, and a commit", async () => {
   const { client } = repoClient({
@@ -109,7 +110,7 @@ test("approved TOR loads only when the sha256 matches at the merge commit and at
         [SRS_PATH]: srs,
       },
       [TOR_MERGE]: { [TOR_PATH]: tor },
-      [SRS_MERGE]: { [SRS_PATH]: srs },
+      [SRS_MERGE]: { [SRS_PATH]: srs, [TRACE_PATH]: Buffer.from("| Requirement | Source IS | Status | Reason |\n| FR-001 | IS-001 | covered | |\n") },
     },
   });
   const loaded = await loadApprovedTor(client, { projectId: PROJECT, userId: ANAK, allowedUserIds: ALLOW });
@@ -127,6 +128,8 @@ test("approved TOR loads only when the sha256 matches at the merge commit and at
   assert.equal(sources.torSha256, sha256Bytes(tor));
   assert.equal(sources.srsSha256, sha256Bytes(srs));
   assert.match(sources.srsText, /SRS fixture/);
+  assert.equal(sources.traceabilityPath, TRACE_PATH);
+  assert.match(sources.traceabilityText, /IS-001/);
 });
 
 test("hash mismatch returns stop", async () => {

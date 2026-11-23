@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { validateChangeReview } from "../lib/change-review.mjs";
+import { changePullRequestFiles, changeReviewValidationInput, validateChangeReview } from "../lib/change-review.mjs";
 import { sha256 } from "../lib/srs-validate.mjs";
 import { planStagePullRequest } from "../lib/stage-gate.mjs";
 
@@ -9,7 +9,7 @@ const root = new URL("..", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
 test("contradictions are rejected and accepted elaborations keep requirement ids", async () => {
-  const tor = await read("fixtures/test/task-tracker-lite/docs/tor.md");
+  const tor = await read("fixtures/test/p5-new/tor.md");
   const original = await read("fixtures/test/p5-change/srs.md");
   const revised = await read("fixtures/test/p5-change/srs-revised.md");
   const base = {
@@ -38,15 +38,15 @@ test("contradictions are rejected and accepted elaborations keep requirement ids
   const customer = validateChangeReview({
     ...base,
     review: await read("fixtures/test/p5-change/feedback-elaboration.md"),
-    revisedSrs: `${revised}\n\nThe product shall provide external customer access.\n`,
+    revisedSrs: `${revised}\nSource: OS-001\n`,
   });
-  assert.equal(customer.ok, false);
+  assert.ok(customer.errors.includes("revised SRS adds excluded OS-001"));
   const dropped = validateChangeReview({
     ...base,
     review: await read("fixtures/test/p5-change/feedback-elaboration.md"),
-    revisedSrs: revised.replace(/### FR-002[\s\S]*?Source: TOR 3\.3\n/, ""),
+    revisedSrs: revised.replace(/### FR-002[\s\S]*?Source: IS-002\n/, ""),
   });
-  assert.equal(dropped.ok, false);
+  assert.ok(dropped.errors.includes("revised SRS drops IS-002"));
   const fixture = planStagePullRequest({
     fixture: true,
     validationOk: true,
@@ -55,4 +55,50 @@ test("contradictions are rejected and accepted elaborations keep requirement ids
     allowedDocs: ["srs.md"],
   });
   assert.equal(fixture.ok, false);
+});
+
+test("an IS that survives only as an N/A-with-reason row still passes", async () => {
+  const tor = await read("fixtures/test/p5-new/tor.md");
+  const original = await read("fixtures/test/p5-change/srs.md");
+  const revised = await read("fixtures/test/p5-change/srs-revised.md");
+  const waived = [
+    "| Requirement | Source IS | Status | Reason |",
+    "| --- | --- | --- | --- |",
+    "| FR-002 | IS-002 | N/A | Status updates are deferred. |",
+  ].join("\n");
+  const revisedSrs = revised.replace(/### FR-002[\s\S]*?Source: IS-002\n/, "");
+  const kept = validateChangeReview({
+    originalSrs: original,
+    revisedSrs,
+    originalTraceability: waived,
+    revisedTraceability: waived,
+    torText: tor,
+    expectedTorSha256: sha256(tor),
+    review: await read("fixtures/test/p5-change/feedback-elaboration.md"),
+  });
+  assert.equal(kept.ok, true, kept.errors.join("\n"));
+  const input = changeReviewValidationInput({
+    loaded: { srsText: original, torText: tor, torSha256: sha256(tor), traceabilityText: waived },
+    review: "review",
+    revisedSrs,
+    revisedTraceability: waived,
+  });
+  assert.equal(input.originalTraceability, waived);
+  assert.equal(input.revisedTraceability, waived);
+  const committed = changePullRequestFiles({
+    projectId: "demo",
+    review: "review",
+    revisedSrs,
+    revisedTraceability: waived,
+    report: kept.report,
+  });
+  assert.equal(committed.some((file) => file.path === "projects/demo/docs/traceability.md"), true);
+  const omitted = changePullRequestFiles({
+    projectId: "demo",
+    review: "review",
+    revisedSrs,
+    revisedTraceability: null,
+    report: kept.report,
+  });
+  assert.equal(omitted.some((file) => file.path.endsWith("traceability.md")), false);
 });

@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { slackUserIdFromAuth } from "../../../../lib/authz.mjs";
-import { validateChangeReview } from "../../../../lib/change-review.mjs";
+import { changeReviewValidationInput, validateChangeReview } from "../../../../lib/change-review.mjs";
 import { loadChangeControlSources } from "../../../../lib/project-files.mjs";
 import { assessWrite } from "../../../../lib/write-policy.mjs";
 import { factoryConfig } from "../../../../generated/config.js";
@@ -30,13 +30,13 @@ export default defineTool({
     await sandbox.writeTextFile({ path: `${root}/project.yaml`, content: loaded.projectYaml ?? "" });
     await sandbox.writeTextFile({ path: loaded.torPath ?? `${root}/docs/tor.md`, content: loaded.torText });
     const revisedSrs = (await sandbox.readTextFile({ path: `${root}/docs/srs.md` })) || loaded.srsText;
-    const result = validateChangeReview({
+    const revisedTraceability = await sandbox.readTextFile({ path: `${root}/docs/traceability.md` });
+    const result = validateChangeReview(changeReviewValidationInput({
+      loaded,
       review: (await sandbox.readTextFile({ path: `${root}/docs/change-review.md` })) ?? "",
-      originalSrs: loaded.srsText,
       revisedSrs,
-      torText: loaded.torText,
-      expectedTorSha256: loaded.torSha256,
-    });
+      revisedTraceability,
+    }));
     const reportPath = `${root}/docs/change-validation.md`;
     const decision = assessWrite(reportPath, { allowedDocs: ["change-validation.md"] });
     if (!decision.allowed) throw new Error(decision.reason);

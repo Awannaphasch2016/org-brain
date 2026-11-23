@@ -25,6 +25,12 @@ export default defineTool({
     await sandbox.writeTextFile({ path: `projects/${projectId}/project.yaml`, content: loaded.projectYaml });
     await sandbox.writeTextFile({ path: loaded.torPath ?? `projects/${projectId}/docs/tor.md`, content: loaded.torText });
     await sandbox.writeTextFile({ path: loaded.srsPath ?? `projects/${projectId}/docs/srs.md`, content: loaded.srsText });
+    if (loaded.traceabilityText) {
+      await sandbox.writeTextFile({
+        path: loaded.traceabilityPath ?? `projects/${projectId}/docs/traceability.md`,
+        content: loaded.traceabilityText,
+      });
+    }
     return {
       denied: false,
       fetch: true,
