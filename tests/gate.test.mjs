@@ -364,7 +364,7 @@ test("decision JSON round-trips and an unknown schema is rejected", () => {
   assert.equal(parseDecisionComment(renderDecisionComment(unknown, IDENTITY.label)).reason, "unknown schema");
 });
 
-test("model tools do not receive a merge tool, and this repo does not claim a shared Slack router", async () => {
+test("model tools do not receive a merge tool, and the README describes the ISO Workflows router", async () => {
   const forbidden = [
     "mergeApprovedPullRequest",
     "mergeRecordingPullRequest",
@@ -384,7 +384,10 @@ test("model tools do not receive a merge tool, and this repo does not claim a sh
     }
   }
   const readme = await readFile(new URL("README.md", root), "utf8");
-  assert.match(readme, /does not add a shared Slack router/);
+  assert.match(readme, /ISO Workflows/);
+  assert.match(readme, /lib\/orchestrator\.mjs/);
+  assert.equal(readme.includes("does not add a shared Slack router"), false);
+  assert.equal(readme.includes("The installed Slack app is the Specification Agent"), false);
 });
 
 function cardInput(stage) {

@@ -1,9 +1,9 @@
 display_information:
-  name: Specification Agent
+  name: ISO Workflows
   description: Software Factory - turns a frozen TOR into an approved SRS
 features:
   bot_user:
-    display_name: specification
+    display_name: ISO Workflows
     always_online: true
 oauth_config:
   scopes:

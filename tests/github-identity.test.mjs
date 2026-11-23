@@ -24,7 +24,7 @@ test("installation token mint uses the app JWT and returns the bot login", async
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, authorization: init.headers.authorization });
-    if (url.endsWith("/app")) return json({ slug: "wewebplus-software-factory" });
+    if (url.endsWith("/app")) return json({ slug: "factory" });
     if (url.includes("/access_tokens")) return json({ token: "ghs_test_token" });
     return json({ message: "no" }, 404);
   };
@@ -35,7 +35,7 @@ test("installation token mint uses the app JWT and returns the bot login", async
     fetchImpl,
   });
   assert.equal(minted.token, "ghs_test_token");
-  assert.equal(minted.botLogin, "wewebplus-software-factory[bot]");
+  assert.equal(minted.botLogin, "factory[bot]");
   assert.equal(calls.length, 2);
   assert.match(calls[0].authorization, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
   assert.equal(calls[0].authorization.includes(pem), false);
