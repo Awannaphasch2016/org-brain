@@ -1,4 +1,4 @@
-# wewebplus-software-factory
+# org-brain
 
 Six Eve agents, one per Software Factory stage. Each opens a GitHub pull request. The model tools never merge. A merge happens only in the Slack gate, and only when a recorded human approval matches that pull request and commit.
 
@@ -15,14 +15,14 @@ The workspace layout is one Eve agent per stage under `agents/`. `agents/factory
 
 ## Slack
 
-The installed Slack app is the Specification Agent. Its public routes are under `/eve/specification/v1/*`.
+The Slack app is ISO Workflows. Humans use one thread. `lib/orchestrator.mjs` is the Phase 1–3 router: setup and an open TOR go to the TOR agent, an approved TOR goes to the Project Planner, and an approved project plan or an SRS in `needs-review` goes to the Specification Agent. An approved SRS has no next Phase 1–3 agent. A Slack message does not advance the phase. The next agent starts from the gate transition, and the bot identity is ISO Workflows.
 
 - Events and interactivity: `https://wewebplus-software-factory.vercel.app/eve/specification/v1/slack`
 - Health: `https://wewebplus-software-factory.vercel.app/eve/specification/v1/health`
 
 The app manifest is `docs/slack-app-manifest.yaml`. Direct messages are disabled in code. The only allowlisted channel is `C0CG6SG8PNW` and the only allowlisted user is `U0CFRUV378D`. An empty allowlist denies everyone. The channel never uses `{ auth: null }`.
 
-The other agents serve `/eve/architecture/v1/slack`, `/eve/planning/v1/slack`, `/eve/implementation/v1/slack`, `/eve/change-control/v1/slack`, and `/eve/release/v1/slack`. One Slack app has one event URL and one interactivity URL. This repository does not add a shared Slack router. Every agent's channel imports the same gate handler (`lib/slack-gate.ts`), so a click is handled by whichever of those URLs the Slack app currently points at. A single router in front of all six agents is the direction for later work.
+Phase 4 and later agents still serve `/eve/architecture/v1/slack`, `/eve/planning/v1/slack`, `/eve/implementation/v1/slack`, `/eve/change-control/v1/slack`, and `/eve/release/v1/slack`. They are not in the Phase 1–3 router. Every agent's channel still imports the same gate handler (`lib/slack-gate.ts`).
 
 Gate buttons are Approve, Reject, and Request revision. Plain code renders only the actions that are valid for the stage. The default approver is Slack user `U0CFRUV378D`. That id is a starting value only: the owner must verify it is Anak's current Slack user id before relying on it. Override it with `FACTORY_GATE_APPROVER_IDS`. An empty approver list allows nobody. A bot or assistant click does not count. Phase 1 TOR uploads, when that flow lands, are text only (`.md` or `.txt`) up to 1 MB. That default is overridable later; this change does not accept PDF or DOCX.
 

@@ -4,7 +4,9 @@ import { actionNeedsReason } from "./gate-actions.mjs";
 import { renderGateReasonModal } from "./gate-reason.mjs";
 import { actorFromUsersInfo, handleGateClick, handleReasonReply, parseGateButtonValue } from "./slack-gate.mjs";
 import { deferGateChain, runApprovedGateChain } from "./gate-chain.mjs";
-import { maybeStartTorAfterGate } from "./tor-interview.mjs";
+import { actorFromDecision } from "./phase-actor.mjs";
+import { deliverPhaseOutput } from "./orchestrator.mjs";
+import { readPhaseReply } from "./phase-hop.mjs";
 
 export type SlackGateOptions = {
   agent: string;
@@ -14,8 +16,6 @@ export type SlackGateOptions = {
 };
 
 type GatePost = { text: string; blocks?: readonly Record<string, unknown>[] };
-
-const startedSetupTurns = new Set<string>();
 
 function scrub(error: unknown) {
   const message = error instanceof Error ? error.message : "gate failed";
@@ -34,9 +34,9 @@ async function post(ctx: SlackInteractionContext | SlackInboundMessageContext, p
 
 /**
  * Shared gate handlers for every agent's Slack channel.
- * This is not a shared HTTP router. Each agent still has its own `/eve/<agent>/v1/slack`
- * URL, and the Slack app can point at only one of them. Whichever URL receives the
- * signed webhook runs this same handler.
+ * Phase 1–3 inbound messages on the specification Slack URL are dispatched by
+ * lib/orchestrator.mjs. Phase 4 and later agents still have their own
+ * `/eve/<agent>/v1/slack` URLs. The Slack app points at one of them.
  */
 export function createSlackGate(options: SlackGateOptions) {
   return {
@@ -85,8 +85,6 @@ export function createSlackGate(options: SlackGateOptions) {
         if (result.status === "approved" || result.status === "rejected" || result.status === "revise") {
           await post(ctx, { text: `Gate recorded ${result.status} for pull request #${result.decision?.pr}.` });
         }
-        const followUp = maybeStartTorAfterGate(options.agent, result, startedSetupTurns);
-        if (followUp) await ctx.send(followUp.prompt);
         if (result.status === "approved" && result.decision) {
           const decision = result.decision;
           // Eve returns Slack's 200 before onInteraction. Returning this promise
@@ -101,8 +99,25 @@ export function createSlackGate(options: SlackGateOptions) {
                 allowedUserIds: options.allowedUserIds,
                 signingSecret: process.env.SLACK_SIGNING_SECRET,
                 env: process.env,
+                threadTs: ctx.slack.threadTs,
+                channelId: ctx.slack.channelId,
+                actor: actorFromDecision(decision, { channelId: ctx.slack.channelId, threadTs: ctx.slack.threadTs }),
+                readReply: (invoked: { agent: string; sessionId: string }) => readPhaseReply({
+                  agent: invoked.agent,
+                  sessionId: invoked.sessionId,
+                  env: process.env,
+                }),
               });
               for (const notice of chain.notices ?? []) await post(ctx, notice);
+              await deliverPhaseOutput({
+                binding: chain.handoff?.binding,
+                reply: chain.handoff?.reply,
+                question: chain.handoff?.question,
+                agent: chain.handoff?.invoked?.agent,
+                sessionId: chain.handoff?.invoked?.sessionId,
+                threadTs: ctx.slack.threadTs,
+                post: (payload: GatePost & { threadTs?: string | null }) => post(ctx, payload),
+              });
             } catch (error) {
               console.error(`[slack-gate] agent=${options.agent} recording ${scrub(error)}`);
               try {

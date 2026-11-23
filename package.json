@@ -1,12 +1,12 @@
 {
-  "name": "wewebplus-software-factory",
+  "name": "org-brain",
   "version": "0.1.0",
   "private": true,
   "description": "Software Factory Prototypes 1-6. Eve agents from a frozen TOR through release verification. They do not deploy the sample application.",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Awannaphasch2016/wewebplus-software-factory.git"
+    "url": "git+https://github.com/Awannaphasch2016/org-brain.git"
   },
   "type": "module",
   "engines": {
