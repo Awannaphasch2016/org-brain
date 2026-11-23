@@ -11,8 +11,14 @@ export function actorFromDecision(
 ): { userId: string; teamId: string; channelId: string | null; threadTs: string | null } | null;
 
 export function phaseTrustedForwarders(
-  forwarder: { authenticator?: string; principalType?: string } | null | undefined,
+  forwarder: {
+    authenticator?: string;
+    principalType?: string;
+    issuer?: string;
+    attributes?: { project_id?: string; environment?: string };
+  } | null | undefined,
   assertion: { principal?: { current?: Record<string, any>; initiator?: Record<string, any> } } | null | undefined,
+  env?: Record<string, string | undefined>,
 ): boolean;
 
 export function renderPhaseQuestion(input: {

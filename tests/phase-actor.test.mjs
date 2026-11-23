@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { vercelOidc } from "eve/channels/auth";
 import { resolveForwardedPrincipal } from "../node_modules/eve/dist/src/channel/forwarded-principal.js";
 import { slackUserIdFromAuth } from "../lib/authz.mjs";
 import { GithubClient } from "../lib/github.mjs";
@@ -12,13 +13,29 @@ import { answerPhaseSession, readPhaseReply, startPhaseAgent } from "../lib/phas
 const ANAK = "U0CFRUV378D";
 const OTHER = "U0000000000";
 const SHA = "a".repeat(40);
+const PROJECT = "prj_D4lCsHuXRH1ZLAXvliq5BkCDHwbm";
+const ISSUER = "https://oidc.vercel.com/anak2";
 
-const oidcForwarder = {
-  authenticator: "oidc",
-  principalId: "owner:acme:project:factory:environment:production",
-  principalType: "runtime",
-  attributes: {},
-};
+function deploymentForwarder(overrides = {}) {
+  return {
+    authenticator: "oidc",
+    issuer: ISSUER,
+    principalId: `${ISSUER}:owner:anak2:project:org-brain:environment:production`,
+    principalType: "runtime",
+    subject: "owner:anak2:project:org-brain:environment:production",
+    attributes: { project_id: PROJECT, environment: "production" },
+    ...overrides,
+    attributes: { project_id: PROJECT, environment: "production", ...overrides.attributes },
+  };
+}
+
+const oidcForwarder = deploymentForwarder();
+const deploymentEnv = { VERCEL_PROJECT_ID: PROJECT, VERCEL_ENV: "production" };
+
+function slackAssertion(userId = ANAK) {
+  const current = forwardedSlackPrincipal({ userId, teamId: "T1" }).current;
+  return { principal: { current, initiator: current } };
+}
 
 test("a hopped TOR session loads a project as an allowlisted user", async () => {
   const calls = [];
@@ -38,11 +55,11 @@ test("a hopped TOR session loads a project as an allowlisted user", async () => 
   assert.equal(forwarded.current.attributes.user_id, ANAK);
   assert.equal(forwarded.current.attributes.channel_id, "C1");
   assert.equal(forwarded.current.attributes.thread_ts, "1.2");
-  const accepted = await resolveForwardedPrincipal({
+  const accepted = await withDeploymentEnv(() => resolveForwardedPrincipal({
     trustedForwarders: phaseTrustedForwarders,
     forwarder: oidcForwarder,
     payload: { message: calls[0].body.message, forwardedPrincipal: forwarded },
-  });
+  }));
   assert.equal(accepted.accepted, true);
   const userId = slackUserIdFromAuth(accepted.auth);
   assert.equal(userId, ANAK);
@@ -61,11 +78,11 @@ test("a hopped TOR session loads a project as an allowlisted user", async () => 
 
 test("a non-allowlisted forwarded user is still denied", async () => {
   const actor = { userId: OTHER, teamId: "T1", channelId: "C1", threadTs: "1.2" };
-  const accepted = await resolveForwardedPrincipal({
+  const accepted = await withDeploymentEnv(() => resolveForwardedPrincipal({
     trustedForwarders: phaseTrustedForwarders,
     forwarder: oidcForwarder,
     payload: { forwardedPrincipal: forwardedSlackPrincipal(actor) },
-  });
+  }));
   assert.equal(accepted.accepted, true);
   const harness = projectClient();
   const denied = await loadProjectFiles(harness.client, {
@@ -98,6 +115,82 @@ test("a body-supplied principal without valid OIDC is rejected", async () => {
   assert.equal(phaseTrustedForwarders(
     { authenticator: "oidc", principalType: "user", attributes: {} },
     { principal: { current: payload.forwardedPrincipal.current, initiator: payload.forwardedPrincipal.current } },
+    deploymentEnv,
+  ), false);
+});
+
+test("the phase eve channels use vercelOidc() as their only OIDC route-auth acceptor", async () => {
+  for (const agent of ["tor", "project-planner", "specification"]) {
+    const source = await readFile(new URL(`../agents/${agent}/agent/channels/eve.ts`, import.meta.url), "utf8");
+    assert.match(source, /import \{ localDev, vercelOidc \} from "eve\/channels\/auth";/);
+    assert.match(source, /auth:\s*\[vercelOidc\(\), localDev\(\)\]/);
+    assert.match(source, /trustedForwarders:\s*phaseTrustedForwarders/);
+    assert.equal(source.replaceAll("vercelOidc", "").includes("oidc("), false);
+    assert.equal(source.includes("jwtHmac"), false);
+    assert.equal(source.includes("jwtEcdsa"), false);
+    assert.equal(source.includes("verifyOidc"), false);
+  }
+});
+
+test("vercelOidc() rejects a token with the wrong audience", async () => {
+  const authenticate = vercelOidc();
+  const token = unsignedJwt({
+    iss: ISSUER,
+    aud: "https://evil.example/anak2",
+    sub: "owner:anak2:project:org-brain:environment:production",
+    project_id: PROJECT,
+    environment: "production",
+  });
+  const request = new Request("https://factory.example/eve/tor/v1/session", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(await authenticate(request), null);
+});
+
+test("the predicate rejects another project, environment, or issuer", () => {
+  const assertion = slackAssertion();
+  assert.equal(phaseTrustedForwarders(
+    deploymentForwarder({ attributes: { project_id: "prj_other", environment: "production" } }),
+    assertion,
+    deploymentEnv,
+  ), false);
+  assert.equal(phaseTrustedForwarders(
+    deploymentForwarder({ attributes: { project_id: PROJECT, environment: "preview" } }),
+    assertion,
+    deploymentEnv,
+  ), false);
+  assert.equal(phaseTrustedForwarders(
+    deploymentForwarder({ issuer: "https://oidc.vercel.com/other-team" }),
+    assertion,
+    deploymentEnv,
+  ), false);
+  assert.equal(phaseTrustedForwarders(
+    deploymentForwarder(),
+    assertion,
+    { VERCEL_PROJECT_ID: PROJECT, VERCEL_TARGET_ENV: "preview", VERCEL_ENV: "production" },
+  ), false);
+});
+
+test("a fully matching forwarder is accepted", () => {
+  assert.equal(phaseTrustedForwarders(deploymentForwarder(), slackAssertion(), deploymentEnv), true);
+  assert.equal(phaseTrustedForwarders(
+    deploymentForwarder({ principalType: "service" }),
+    slackAssertion(),
+    { VERCEL_PROJECT_ID: PROJECT, VERCEL_TARGET_ENV: "production" },
+  ), true);
+});
+
+test("a missing VERCEL_PROJECT_ID or environment variable fails closed", () => {
+  const assertion = slackAssertion();
+  const forwarder = deploymentForwarder();
+  assert.equal(phaseTrustedForwarders(forwarder, assertion, { VERCEL_ENV: "production" }), false);
+  assert.equal(phaseTrustedForwarders(forwarder, assertion, { VERCEL_PROJECT_ID: PROJECT }), false);
+  assert.equal(phaseTrustedForwarders(forwarder, assertion, { VERCEL_PROJECT_ID: "", VERCEL_ENV: "production" }), false);
+  assert.equal(phaseTrustedForwarders(forwarder, assertion, { VERCEL_PROJECT_ID: "prj_other", VERCEL_ENV: "production" }), false);
+  assert.equal(phaseTrustedForwarders(
+    deploymentForwarder({ attributes: { project_id: PROJECT, environment: undefined } }),
+    assertion,
+    deploymentEnv,
   ), false);
 });
 
@@ -137,6 +230,34 @@ test("an ask_question posts to the bound thread and its answer returns to the sa
   assert.equal(card.blocks[1].elements.length, 2);
   assert.equal(actorFromDecision({ decidedBy: "slack:T1:U0CFRUV378D", slack: { channel: "C1" } }, { threadTs: "1.2" }).userId, ANAK);
 });
+
+async function withDeploymentEnv(run) {
+  const previous = {
+    VERCEL_PROJECT_ID: process.env.VERCEL_PROJECT_ID,
+    VERCEL_ENV: process.env.VERCEL_ENV,
+    VERCEL_TARGET_ENV: process.env.VERCEL_TARGET_ENV,
+  };
+  process.env.VERCEL_PROJECT_ID = PROJECT;
+  process.env.VERCEL_ENV = "production";
+  delete process.env.VERCEL_TARGET_ENV;
+  try {
+    return await run();
+  } finally {
+    restoreEnv("VERCEL_PROJECT_ID", previous.VERCEL_PROJECT_ID);
+    restoreEnv("VERCEL_ENV", previous.VERCEL_ENV);
+    restoreEnv("VERCEL_TARGET_ENV", previous.VERCEL_TARGET_ENV);
+  }
+}
+
+function restoreEnv(name, value) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
+function unsignedJwt(payload) {
+  const part = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${part({ alg: "none", typ: "JWT" })}.${part(payload)}.sig`;
+}
 
 function questionStream() {
   const line = `${JSON.stringify({
