@@ -117,6 +117,19 @@ async function filesUnder(directory) {
 }
 
 const APPROVAL_REQUIRED = /^<!--\s*approval:\s*required\s*-->/i;
+const HISTORIC_GUIDELINE_APPROVER = "Coding Agent on behalf of Anak Wannaphaschaiyong (U0CFRUV378D)";
+const HISTORIC_GUIDELINE_APPROVED_AT = "2026-11-09T20:16:14.852Z";
+
+export function guidelineApproverIssue(approvedBy) {
+  const text = String(approvedBy ?? "");
+  if (/Grokbot/i.test(text) && !/on Anak's explicit approval/i.test(text)) {
+    return "Grokbot is not a guideline approver unless the record says on Anak's explicit approval";
+  }
+  if (/Coding Agent|Spec Writer/i.test(text)) {
+    return "an agent cannot approve a guideline";
+  }
+  return null;
+}
 
 async function classifyGuidelines() {
   const paths = (await filesUnder(resolve(knowledgeRoot, "guidelines"))).filter(
@@ -409,6 +422,10 @@ export async function verifyKnowledge() {
     ) {
       fail("delegated approval must say that the approval was delegated.");
     }
+    const historicApproval = manifest.approval.approvedBy === HISTORIC_GUIDELINE_APPROVER
+      && manifest.approval.approvedAt === HISTORIC_GUIDELINE_APPROVED_AT;
+    const approverIssue = guidelineApproverIssue(manifest.approval.approvedBy);
+    if (approverIssue && !historicApproval) fail(approverIssue);
     if (manifest.sources.length === 0) {
       fail("approved corpora require at least one source.");
     }
