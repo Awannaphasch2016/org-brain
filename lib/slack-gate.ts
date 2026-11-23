@@ -4,6 +4,8 @@ import { actionNeedsReason } from "./gate-actions.mjs";
 import { renderGateReasonModal } from "./gate-reason.mjs";
 import { actorFromUsersInfo, handleGateClick, handleReasonReply, parseGateButtonValue } from "./slack-gate.mjs";
 import { deferGateChain, runApprovedGateChain } from "./gate-chain.mjs";
+import { deliverPhaseOutput } from "./orchestrator.mjs";
+import { readPhaseReply } from "./phase-hop.mjs";
 
 export type SlackGateOptions = {
   agent: string;
@@ -96,9 +98,20 @@ export function createSlackGate(options: SlackGateOptions) {
                 allowedUserIds: options.allowedUserIds,
                 signingSecret: process.env.SLACK_SIGNING_SECRET,
                 env: process.env,
+                threadTs: ctx.slack.threadTs,
+                readReply: (invoked: { agent: string; sessionId: string }) => readPhaseReply({
+                  agent: invoked.agent,
+                  sessionId: invoked.sessionId,
+                  env: process.env,
+                }),
               });
               for (const notice of chain.notices ?? []) await post(ctx, notice);
-              if (chain.handoff?.binding) await post(ctx, { text: chain.handoff.binding });
+              await deliverPhaseOutput({
+                binding: chain.handoff?.binding,
+                reply: chain.handoff?.reply,
+                threadTs: ctx.slack.threadTs,
+                post: (payload: GatePost & { threadTs?: string | null }) => post(ctx, payload),
+              });
             } catch (error) {
               console.error(`[slack-gate] agent=${options.agent} recording ${scrub(error)}`);
               try {

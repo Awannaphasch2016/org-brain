@@ -2,8 +2,9 @@ import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { specificationConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
-import { dispatchSpecificationInbound, handleSpecificationInbound, loadOrchestratorProject, projectIdFromSlackText, projectIdFromThread } from "../../../../lib/orchestrator.mjs";
-import { startPhaseAgent } from "../../../../lib/phase-hop.mjs";
+import { rememberPhaseSession } from "../../../../lib/gate-chain.mjs";
+import { deliverPhaseOutput, dispatchSpecificationInbound, handleSpecificationInbound, loadOrchestratorProject, phaseSessionFromThread, projectIdFromSlackText, projectIdFromThread } from "../../../../lib/orchestrator.mjs";
+import { continuePhaseSession, readPhaseReply, startPhaseAgent } from "../../../../lib/phase-hop.mjs";
 import { createGateGithubClient } from "../lib/github-token.js";
 
 export { postSrsGateCard } from "../../../../lib/srs-gate.mjs";
@@ -58,14 +59,32 @@ export default slackChannel({
         const projectState = await loadOrchestratorProject(await createGateGithubClient(), projectId);
         if (projectState) {
           const routed = dispatchSpecificationInbound({ projectState, text: message.text });
-          if (routed.agent && routed.agent !== "specification") {
-            await handleSpecificationInbound({
+          const bound = phaseSessionFromThread(threadMessages);
+          if ((routed.agent && routed.agent !== "specification") || bound?.sessionId || (bound?.agent && bound.agent !== "specification")) {
+            const outcome = await handleSpecificationInbound({
               projectState,
               text: message.text,
               threadMessages,
               startAgent: startPhaseAgent,
+              continueAgent: continuePhaseSession,
+              readReply: readPhaseReply,
+              recordSession: async (record: { pr?: number }) => rememberPhaseSession(await createGateGithubClient(), Number(record.pr), record),
             });
-            return null;
+            if (outcome.resumed || outcome.agent !== "specification") {
+              await deliverPhaseOutput({
+                binding: outcome.binding,
+                reply: outcome.reply,
+                threadTs: ctx.slack.threadTs,
+                post: async (payload) => {
+                  await ctx.slack.request("chat.postMessage", {
+                    channel: ctx.slack.channelId,
+                    thread_ts: payload.threadTs ?? ctx.slack.threadTs,
+                    text: payload.text,
+                  });
+                },
+              });
+              return null;
+            }
           }
         }
       } catch (error) {

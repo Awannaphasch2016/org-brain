@@ -7,17 +7,32 @@ export function loadOrchestratorProject(
 
 export function projectIdFromThread(messages: readonly { text?: string; body?: string }[] | undefined): string | null;
 
+export function phaseSessionFromThread(messages: readonly { text?: string; body?: string }[] | undefined): Record<string, any> | null;
+
+export function deliverPhaseOutput(input: {
+  binding?: string | null;
+  reply?: string | null;
+  threadTs?: string | null;
+  post: (payload: { text: string; threadTs?: string | null }) => Promise<unknown> | unknown;
+}): Promise<void>;
+
 export function handleSpecificationInbound(input: {
   projectState: Record<string, any>;
   text?: string;
   threadMessages?: readonly { text?: string; body?: string }[];
   startAgent?: (input: { agent: string; message: string }) => Promise<{ agent: string; sessionId: string; tool: string }>;
+  continueAgent?: (input: { agent: string; sessionId: string; message: string }) => Promise<{ agent: string; sessionId: string; tool: string }>;
+  readReply?: (invoked: { agent: string; sessionId: string }) => Promise<string>;
+  recordSession?: (record: { pr?: number; idempotencyKey?: string; projectId?: string; agent?: string; sessionId?: string }) => Promise<{ agent?: string; sessionId?: string } | null>;
   requestUrl?: string;
 }): Promise<{
   agent: string | null;
   advanced: boolean;
   requestUrl: string;
   invoked: { agent: string; sessionId: string; tool: string } | null;
+  resumed?: boolean;
+  reply?: string | null;
+  binding?: string | null;
 }>;
 
 export function dispatchSpecificationInbound(input: {

@@ -3,7 +3,8 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { recordBaseline } from "../lib/baseline.mjs";
 import { deferGateChain, nextPhaseFor, RECORDING_POINTER_KIND, renderTransition, runApprovedGateChain, TRANSITION_KIND } from "../lib/gate-chain.mjs";
-import { startPhaseAgent } from "../lib/phase-hop.mjs";
+import { deliverPhaseOutput, handleSpecificationInbound, renderThreadProjectBinding } from "../lib/orchestrator.mjs";
+import { continuePhaseSession, readPhaseReply, startPhaseAgent } from "../lib/phase-hop.mjs";
 import { GithubClient, mergeRecordingPullRequest, recordApprovedBaseline } from "../lib/github.mjs";
 import { writeLoadedFiles } from "../lib/project-files.mjs";
 import { parseSimpleYaml } from "../lib/project-yaml.mjs";
@@ -130,6 +131,7 @@ test("an approved gate records one baseline, merges it, and writes one transitio
     const second = await runApprovedGateChain({
       client: cold.client,
       decision: decision(stage),
+      startAgent: async ({ agent, message }) => ({ agent, sessionId: `sess-${agent}`, tool: message, url: `https://factory.example/eve/${agent}/v1/session` }),
       recordBaseline: async () => {
         recorded.push({ again: true });
         return { number: 99 };
@@ -378,7 +380,195 @@ test("setup on the gate chain starts the TOR session", async () => {
   assert.equal(calls[0].url, "https://factory.example/eve/tor/v1/session");
   assert.match(calls[0].body.message, /load_tor_workspace/);
   assert.match(result.handoff.binding, /factory-thread-project/);
+  assert.match(result.handoff.binding, /sess-tor/);
 });
+
+test("a bound peer session posts its reply and a follow-up returns to that session", async () => {
+  const calls = [];
+  const posts = [];
+  const env = { VERCEL_URL: "factory.example" };
+  const auth = { authorization: "Bearer test" };
+  let replyText = "What is the objective?";
+  const fetchImpl = async (url, init = {}) => {
+    const method = String(init.method ?? "GET").toUpperCase();
+    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : null });
+    if (method === "POST" && url.endsWith("/v1/session")) {
+      return { ok: true, async json() { return { sessionId: "sess-tor", deliveryId: "d1" }; } };
+    }
+    if (method === "GET" && url.endsWith("/stream")) return replyStream(replyText);
+    if (method === "POST" && url.endsWith("/sess-tor")) {
+      return { ok: true, async json() { return { sessionId: "sess-tor", deliveryId: "d2" }; } };
+    }
+    throw new Error(`unexpected ${method} ${url}`);
+  };
+  const harness = chainClient({ ci: "success" });
+  const result = await runApprovedGateChain({
+    client: harness.client,
+    decision: decision("setup"),
+    threadTs: "1.2",
+    startAgent: (input) => startPhaseAgent({ ...input, env, auth, fetchImpl }),
+    readReply: (invoked) => readPhaseReply({ ...invoked, env, auth, fetchImpl }),
+  });
+  await deliverPhaseOutput({
+    binding: result.handoff.binding,
+    reply: result.handoff.reply,
+    threadTs: "1.2",
+    post: async (payload) => posts.push(payload),
+  });
+  assert.equal(result.handoff.invoked.sessionId, "sess-tor");
+  assert.equal(posts[0].threadTs, "1.2");
+  assert.match(posts[0].text, /"sessionId": "sess-tor"/);
+  assert.deepEqual(posts[1], { text: "What is the objective?", threadTs: "1.2" });
+  replyText = "I will draft the TOR from that objective.";
+  const follow = await handleSpecificationInbound({
+    projectState: { id: "demo", status: "active", tor: { status: "none" }, projectPlan: { status: "none" }, srs: { status: "none" } },
+    text: "Task tracking for a small team",
+    threadMessages: [{ text: posts[0].text }],
+    startAgent: async () => { throw new Error("duplicate session"); },
+    continueAgent: (input) => continuePhaseSession({ ...input, env, auth, fetchImpl }),
+    readReply: (invoked) => readPhaseReply({ ...invoked, env, auth, fetchImpl }),
+  });
+  await deliverPhaseOutput({
+    reply: follow.reply,
+    threadTs: "1.2",
+    post: async (payload) => posts.push(payload),
+  });
+  assert.equal(follow.resumed, true);
+  assert.equal(follow.invoked.sessionId, "sess-tor");
+  assert.equal(posts.at(-1).text, "I will draft the TOR from that objective.");
+  assert.equal(posts.at(-1).threadTs, "1.2");
+  assert.equal(calls.filter((call) => call.method === "POST" && call.url.endsWith("/v1/session")).length, 1);
+  assert.equal(calls.find((call) => call.method === "POST" && call.url.endsWith("/sess-tor")).body.message, "Task tracking for a small team");
+  const slack = await readFile(new URL("../agents/specification/agent/channels/slack.ts", import.meta.url), "utf8");
+  const gate = await readFile(new URL("../lib/slack-gate.ts", import.meta.url), "utf8");
+  assert.match(slack, /continuePhaseSession/);
+  assert.match(slack, /deliverPhaseOutput/);
+  assert.match(gate, /deliverPhaseOutput/);
+  assert.match(gate, /readPhaseReply/);
+});
+
+test("a failed hop starts on the next chain call and a second call does not", async () => {
+  const harness = chainClient({ ci: "success" });
+  const starts = [];
+  const startAgent = async ({ agent }) => {
+    starts.push(agent);
+    if (starts.length === 1) throw new Error("hop failed");
+    return { agent, sessionId: "sess-once", tool: "load_tor_workspace", url: "https://factory.example/eve/tor/v1/session" };
+  };
+  const first = await runApprovedGateChain({
+    client: harness.client,
+    decision: decision("setup"),
+    threadTs: "1.2",
+    startAgent,
+  });
+  assert.equal(first.status, "session-pending");
+  assert.equal(first.handoff.invoked, null);
+  assert.match(first.handoff.binding, /"sessionId": null/);
+  const second = await runApprovedGateChain({
+    client: harness.client,
+    decision: decision("setup"),
+    threadTs: "1.2",
+    startAgent,
+  });
+  assert.equal(second.handoff.invoked.sessionId, "sess-once");
+  assert.equal(second.handoff.started, true);
+  const third = await runApprovedGateChain({
+    client: harness.client,
+    decision: decision("setup"),
+    threadTs: "1.2",
+    startAgent,
+  });
+  assert.equal(third.status, "already-transitioned");
+  assert.equal(third.handoff, null);
+  assert.deepEqual(starts, ["tor", "tor"]);
+  assert.equal(harness.comments[12].filter((comment) => comment.body.includes("sess-once")).length, 1);
+});
+
+test("a thread message starts a missing phase session once", async () => {
+  const stored = [];
+  const starts = [];
+  const pending = renderThreadProjectBinding({
+    projectId: "demo",
+    agent: "tor",
+    sessionId: null,
+    idempotencyKey: "gate:setup",
+    pr: 12,
+    threadTs: "1.2",
+  });
+  const projectState = { id: "demo", status: "active", tor: { status: "none" }, projectPlan: { status: "none" }, srs: { status: "none" } };
+  const startAgent = async ({ agent }) => {
+    starts.push(agent);
+    return { agent, sessionId: "sess-thread", tool: "load_tor_workspace", url: "https://factory.example/eve/tor/v1/session" };
+  };
+  const recordSession = async (record) => {
+    const existing = stored.find((item) => item.idempotencyKey === record.idempotencyKey && item.sessionId);
+    if (existing) return existing;
+    if (!record.sessionId) return null;
+    stored.push(record);
+    return record;
+  };
+  const first = await handleSpecificationInbound({
+    projectState,
+    text: "continue",
+    threadMessages: [{ text: pending }],
+    startAgent,
+    recordSession,
+    readReply: async () => "Which objective?",
+  });
+  const second = await handleSpecificationInbound({
+    projectState,
+    text: "task tracking",
+    threadMessages: [{ text: first.binding }],
+    startAgent,
+    recordSession,
+    continueAgent: async (input) => ({ agent: input.agent, sessionId: input.sessionId, tool: "load_tor_workspace" }),
+    readReply: async () => "Drafting.",
+  });
+  const third = await handleSpecificationInbound({
+    projectState,
+    text: "again",
+    threadMessages: [{ text: pending }],
+    startAgent,
+    recordSession,
+    continueAgent: async (input) => ({ agent: input.agent, sessionId: input.sessionId, tool: "load_tor_workspace" }),
+    readReply: async () => "",
+  });
+  assert.equal(first.invoked.sessionId, "sess-thread");
+  assert.equal(second.resumed, true);
+  assert.equal(second.invoked.sessionId, "sess-thread");
+  assert.equal(third.resumed, true);
+  assert.equal(third.invoked.sessionId, "sess-thread");
+  assert.deepEqual(starts, ["tor"]);
+});
+
+function replyStream(text) {
+  const line = `${JSON.stringify({
+    at: "2026-11-23T00:00:00.000Z",
+    facts: [
+      { type: "content.completed", data: { kind: "text", phase: "reply", value: text } },
+      { type: "turn.settled", data: { outcome: "completed" } },
+    ],
+  })}\n`;
+  const encoded = new TextEncoder().encode(line);
+  return {
+    ok: true,
+    body: {
+      getReader() {
+        let sent = false;
+        return {
+          async read() {
+            if (sent) return { done: true, value: undefined };
+            sent = true;
+            return { done: false, value: encoded };
+          },
+          async cancel() {
+            sent = true;
+          },
+        };
+      },
+    },
+  };
+}
 
 test("Phase 1-3 tools no longer prompt and the later phases still do", async () => {
   const removed = {
