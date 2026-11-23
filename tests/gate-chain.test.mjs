@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { recordBaseline } from "../lib/baseline.mjs";
 import { deferGateChain, nextPhaseFor, RECORDING_POINTER_KIND, renderTransition, runApprovedGateChain, TRANSITION_KIND } from "../lib/gate-chain.mjs";
+import { startPhaseAgent } from "../lib/phase-hop.mjs";
 import { GithubClient, mergeRecordingPullRequest, recordApprovedBaseline } from "../lib/github.mjs";
 import { writeLoadedFiles } from "../lib/project-files.mjs";
 import { parseSimpleYaml } from "../lib/project-yaml.mjs";
@@ -113,6 +114,7 @@ test("an approved gate records one baseline, merges it, and writes one transitio
         harness.pulls[31].merged = true;
         return { merged: true };
       },
+      startAgent: async ({ agent, message }) => ({ agent, sessionId: `sess-${agent}`, tool: message, url: `https://factory.example/eve/${agent}/v1/session` }),
     });
     assert.equal(first.status, "transitioned");
     assert.equal(recorded.length, 1);
@@ -297,12 +299,29 @@ projectPlan:
 srs:
   status: none
 `;
+  const calls = [];
+  const startAgent = (input) => startPhaseAgent({
+    ...input,
+    env: { VERCEL_URL: "factory.example" },
+    auth: { authorization: "Bearer test" },
+    fetchImpl: async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      const agent = url.split("/eve/")[1].split("/")[0];
+      return {
+        ok: true,
+        async json() {
+          return { sessionId: `sess-${agent}`, deliveryId: `del-${agent}` };
+        },
+      };
+    },
+  });
   const tor = chainClient({ projectYaml: torYaml, ci: "success" });
   const torResult = await runApprovedGateChain({
     client: tor.client,
     decision: decision("tor"),
     allowedUserIds: ["U0CFRUV378D"],
     signingSecret: "test-signing-secret",
+    startAgent,
     recordBaseline: async () => ({ number: 31 }),
     mergeRecording: async () => {
       tor.pulls[31].merged = true;
@@ -310,11 +329,12 @@ srs:
   });
   assert.equal(torResult.status, "transitioned");
   assert.equal(torResult.event.next, "project-planner");
-  assert.equal(torResult.handoff.agent, "project-planner");
-  assert.equal(torResult.handoff.posts.length, 1);
-  assert.equal(torResult.handoff.posts[0].source, "gate-event");
+  assert.equal(torResult.handoff.invoked.agent, "project-planner");
+  assert.equal(torResult.handoff.invoked.sessionId, "sess-project-planner");
+  assert.equal(torResult.handoff.invoked.tool, "load_plan_workspace");
+  assert.equal(calls[0].url, "https://factory.example/eve/project-planner/v1/session");
+  assert.match(calls[0].body.message, /load_plan_workspace/);
   assert.equal(torResult.handoff.messages.some((message) => message.role === "user"), false);
-  assert.equal(torResult.handoff.event.kind, TRANSITION_KIND);
 
   const plan = chainClient({ projectYaml: planYaml, ci: "success" });
   const planResult = await runApprovedGateChain({
@@ -322,6 +342,7 @@ srs:
     decision: decision("project-plan"),
     allowedUserIds: ["U0CFRUV378D"],
     signingSecret: "test-signing-secret",
+    startAgent,
     recordBaseline: async () => ({ number: 31 }),
     mergeRecording: async () => {
       plan.pulls[31].merged = true;
@@ -329,9 +350,34 @@ srs:
   });
   assert.equal(planResult.status, "transitioned");
   assert.equal(planResult.event.next, "specification");
-  assert.equal(planResult.handoff.agent, "specification");
-  assert.equal(planResult.handoff.posts.length, 1);
-  assert.equal(planResult.handoff.messages.some((message) => message.role === "user"), false);
+  assert.equal(planResult.handoff.invoked.sessionId, "sess-specification");
+  assert.equal(planResult.handoff.invoked.tool, "load_project");
+  assert.equal(calls.at(-1).url, "https://factory.example/eve/specification/v1/session");
+  assert.match(calls.at(-1).body.message, /load_project/);
+});
+
+test("setup on the gate chain starts the TOR session", async () => {
+  const calls = [];
+  const harness = chainClient({ ci: "success" });
+  const result = await runApprovedGateChain({
+    client: harness.client,
+    decision: decision("setup"),
+    startAgent: (input) => startPhaseAgent({
+      ...input,
+      env: { VERCEL_URL: "factory.example" },
+      auth: { authorization: "Bearer test" },
+      fetchImpl: async (url, init) => {
+        calls.push({ url, body: JSON.parse(init.body) });
+        return { ok: true, async json() { return { sessionId: "sess-tor", deliveryId: "del-tor" }; } };
+      },
+    }),
+  });
+  assert.equal(result.status, "transitioned");
+  assert.equal(result.event.next, "tor");
+  assert.equal(result.handoff.invoked.tool, "load_tor_workspace");
+  assert.equal(calls[0].url, "https://factory.example/eve/tor/v1/session");
+  assert.match(calls[0].body.message, /load_tor_workspace/);
+  assert.match(result.handoff.binding, /factory-thread-project/);
 });
 
 test("Phase 1-3 tools no longer prompt and the later phases still do", async () => {

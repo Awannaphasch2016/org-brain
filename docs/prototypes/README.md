@@ -13,4 +13,4 @@ Each stage is its own Eve workspace agent. `agents/factory/` is reserved and is 
 | 5 | `change-control` | `/eve/change-control/v1/slack` |
 | 6 | `release` | `/eve/release/v1/slack` |
 
-Eve gives every workspace member its own route. One Slack app has one event URL, so the installed app stays on the specification route until it is pointed at another agent. This repository does not add a shared Slack router. Each agent's Slack channel imports the same gate handler, and that handler serves whichever URL receives the signed click. Signing secrets and the allowlist can be reused. No new bot scopes are required for Prototype 2.
+Eve gives every workspace member its own route. Phase 1–3 messages arrive on the specification Slack URL, and the orchestrator starts the TOR, Project Planner, or Specification agent. Phase 4 and later routes remain on this page. Each agent's Slack channel imports the same gate handler. Signing secrets and the allowlist can be reused. No new bot scopes are required for Prototype 2.

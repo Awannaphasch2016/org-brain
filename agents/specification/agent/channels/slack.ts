@@ -2,7 +2,8 @@ import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 import { specificationConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
-import { dispatchSpecificationInbound, loadOrchestratorProject, projectIdFromSlackText } from "../../../../lib/orchestrator.mjs";
+import { dispatchSpecificationInbound, handleSpecificationInbound, loadOrchestratorProject, projectIdFromSlackText, projectIdFromThread } from "../../../../lib/orchestrator.mjs";
+import { startPhaseAgent } from "../../../../lib/phase-hop.mjs";
 import { createGateGithubClient } from "../lib/github-token.js";
 
 export { postSrsGateCard } from "../../../../lib/srs-gate.mjs";
@@ -44,20 +45,32 @@ export default slackChannel({
     if (specificationConfig.status !== "approved") return null;
     const auth = defaultSlackAuth(message, ctx);
     if (!auth) return null;
-    const projectId = projectIdFromSlackText(message.text);
+    let threadMessages: readonly { text?: string }[] = [];
+    try {
+      await ctx.thread.refresh();
+      threadMessages = ctx.thread.recentMessages ?? [];
+    } catch {
+      threadMessages = [];
+    }
+    const projectId = projectIdFromThread(threadMessages) ?? projectIdFromSlackText(message.text);
     if (projectId) {
       try {
         const projectState = await loadOrchestratorProject(await createGateGithubClient(), projectId);
         if (projectState) {
-          const dispatched = dispatchSpecificationInbound({ projectState, text: message.text });
-          if (!dispatched.agent) return null;
-          if (dispatched.agent !== "specification" && dispatched.prompt) {
-            await ctx.send(dispatched.prompt);
+          const routed = dispatchSpecificationInbound({ projectState, text: message.text });
+          if (routed.agent && routed.agent !== "specification") {
+            await handleSpecificationInbound({
+              projectState,
+              text: message.text,
+              threadMessages,
+              startAgent: startPhaseAgent,
+            });
             return null;
           }
         }
-      } catch {
-        // Keep the existing specification turn when the project cannot be loaded.
+      } catch (error) {
+        console.error(`[specification-slack] phase hop ${error instanceof Error ? error.message : "failed"}`);
+        return null;
       }
     }
     if (ctx.isBotMentioned()) return { auth };

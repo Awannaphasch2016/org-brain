@@ -4,7 +4,6 @@ import { actionNeedsReason } from "./gate-actions.mjs";
 import { renderGateReasonModal } from "./gate-reason.mjs";
 import { actorFromUsersInfo, handleGateClick, handleReasonReply, parseGateButtonValue } from "./slack-gate.mjs";
 import { deferGateChain, runApprovedGateChain } from "./gate-chain.mjs";
-import { maybeStartTorAfterGate } from "./tor-interview.mjs";
 
 export type SlackGateOptions = {
   agent: string;
@@ -14,8 +13,6 @@ export type SlackGateOptions = {
 };
 
 type GatePost = { text: string; blocks?: readonly Record<string, unknown>[] };
-
-const startedSetupTurns = new Set<string>();
 
 function scrub(error: unknown) {
   const message = error instanceof Error ? error.message : "gate failed";
@@ -85,8 +82,6 @@ export function createSlackGate(options: SlackGateOptions) {
         if (result.status === "approved" || result.status === "rejected" || result.status === "revise") {
           await post(ctx, { text: `Gate recorded ${result.status} for pull request #${result.decision?.pr}.` });
         }
-        const followUp = maybeStartTorAfterGate(options.agent, result, startedSetupTurns);
-        if (followUp) await ctx.send(followUp.prompt);
         if (result.status === "approved" && result.decision) {
           const decision = result.decision;
           // Eve returns Slack's 200 before onInteraction. Returning this promise
@@ -103,10 +98,7 @@ export function createSlackGate(options: SlackGateOptions) {
                 env: process.env,
               });
               for (const notice of chain.notices ?? []) await post(ctx, notice);
-              for (const item of chain.handoff?.posts ?? []) {
-                await post(ctx, { text: item.text });
-                await ctx.send(item.text);
-              }
+              if (chain.handoff?.binding) await post(ctx, { text: chain.handoff.binding });
             } catch (error) {
               console.error(`[slack-gate] agent=${options.agent} recording ${scrub(error)}`);
               try {
