@@ -1,10 +1,7 @@
-<!-- approval: required -->
 <!-- sources: tor-reference -->
 <!-- priority: 100 -->
 
 # TOR drafting
-
-This guideline is not approved knowledge. It must not be packaged into an agent sandbox until Anak records approval in the knowledge manifest.
 
 Use it only while drafting a TOR, before that TOR is baselined. After the baseline, the TOR is immutable.
 

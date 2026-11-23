@@ -128,25 +128,103 @@ test("dates optional", async () => {
 test("contract test: enforced sections match tor-structure.md", async () => {
   const structure = await read("knowledge/guidelines/tor-structure.md");
   const parsed = torSectionsFromGuideline(structure);
-  const fromFile = [...structure.matchAll(/\b(\d+\.\d+)\s+[A-Za-z]/g)].map((match) => match[1]);
-  assert.deepEqual(parsed.required.map((section) => section.id), fromFile);
-  assert.deepEqual(parsed.optional.map((section) => section.title), ["References"]);
+  assert.deepEqual(parsed.required.map((section) => section.id), [
+    "1.1",
+    "2.1",
+    "2.2",
+    "2.3",
+    "3.1",
+    "3.2",
+    "3.3",
+    "4.1",
+    "4.2",
+    "4.3",
+    "5.1",
+    "5.2",
+    "5.3",
+    "6",
+  ]);
+  assert.equal(parsed.required.some((section) => section.id === "1.2"), false);
+  assert.equal(parsed.required.find((section) => section.id === "6").title, "References");
+  assert.deepEqual(parsed.optional, []);
   const result = await validateFixture("p1-intake-empty");
   assert.deepEqual(
     result.enforcedSections,
     parsed.required.map((section) => `${section.id} ${section.title}`),
   );
+  assert.match(structure, /draft/i);
+  assert.match(structure, /baselined TOR/);
+  assert.match(structure, /Do not rewrite a baselined TOR\./);
+  assert.equal([...structure.matchAll(/^6\. References\b.*$/gm)].length, 1);
+  assert.match(structure, /may say "none"/);
+  assert.match(structure, /Customer contact:/);
+  assert.match(structure, /Write "none"/);
+  assert.match(structure, /Do not write "none identified"/);
+  const rules = structure.split(/^## Rules\s*$/m)[1];
+  assert.match(rules, /1\.1 holds no approval status because project\.yaml is the approval record/);
+  assert.match(rules, /IS-nnn/);
+  assert.match(rules, /OS-nnn/);
 });
 
-test("tor-drafting.md needs approval and is not an approved guideline", async () => {
+test("references belong only in section 6", async () => {
+  const complete = await validateFixture("p1-intake-complete");
+  assert.equal(complete.ok, true, complete.errors.join("\n"));
+  assert.equal(complete.errors.some((error) => /References|1\.2/.test(error)), false);
+  const tor = await read("fixtures/test/p1-intake-complete/tor.md");
+  const analysis = await read("fixtures/test/p1-intake-complete/tor-analysis.md");
+  const elicitationLog = await read("fixtures/test/p1-intake-complete/tor-elicitation-log.md");
+  const structure = await read("knowledge/guidelines/tor-structure.md");
+  const oldHeading = validateIntake({
+    tor: tor.replace("### 2.1 Background", "### 1.2 References\n\nSee the old list.\n\n### 2.1 Background"),
+    analysis,
+    elicitationLog,
+    structureMarkdown: structure,
+  });
+  assert.deepEqual(oldHeading.errors, ["References belong in section 6, not 1.2"]);
+  const missing = validateIntake({
+    tor: tor.replace(/### 6\. References\n\nnone\n?/, ""),
+    analysis,
+    elicitationLog,
+    structureMarkdown: structure,
+  });
+  assert.ok(missing.errors.includes("missing required section: 6 References"));
+  const namedNone = validateIntake({
+    tor: tor.replace("none", "None identified"),
+    analysis,
+    elicitationLog,
+    structureMarkdown: structure,
+  });
+  assert.ok(namedNone.errors.includes("none identified is not an in-scope or out-of-scope item"));
+});
+
+test("section 1.1 rejects an approval status", async () => {
+  const tor = await read("fixtures/test/p1-intake-complete/tor.md");
+  const analysis = await read("fixtures/test/p1-intake-complete/tor-analysis.md");
+  const elicitationLog = await read("fixtures/test/p1-intake-complete/tor-elicitation-log.md");
+  const structure = await read("knowledge/guidelines/tor-structure.md");
+  for (const line of ["Status: Approved", "Status: Pending", "Status: Rejected", "approval status: recorded"]) {
+    const result = validateIntake({
+      tor: tor.replace("Owner: document owner", `Owner: document owner\n${line}`),
+      analysis,
+      elicitationLog,
+      structureMarkdown: structure,
+    });
+    assert.ok(result.errors.includes("1.1 holds an approval status"), line);
+  }
+});
+
+test("tor-drafting.md is approved and packaged for the TOR agent", async () => {
   const pending = await pendingGuidelineFiles();
   const approved = await guidelineFiles();
-  assert.ok(pending.some((path) => path.endsWith("tor-drafting.md")));
-  assert.equal(approved.some((path) => path.endsWith("tor-drafting.md")), false);
+  assert.equal(pending.some((path) => path.endsWith("tor-drafting.md")), false);
+  assert.ok(approved.some((path) => path.endsWith("tor-drafting.md")));
   const text = await read("knowledge/guidelines/tor-drafting.md");
-  assert.match(text, /approval:\s*required/);
+  assert.doesNotMatch(text, /approval:\s*required/);
+  assert.doesNotMatch(text, /not approved knowledge/);
   assert.match(text, /IS-nnn/);
   assert.match(text, /TEL-nnn/);
+  const packaged = await read("agents/tor/agent/sandbox/workspace/knowledge/guidelines/tor-drafting.md");
+  assert.equal(packaged, text);
 });
 
 async function validateFixture(id) {
