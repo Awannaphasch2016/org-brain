@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { gateApproverIds } from "../lib/gate-actions.mjs";
-import { branchRuleTypes, filledRulesetTemplates, RULESET_TEMPLATES, rulesetSpecSha256 } from "../lib/ruleset-spec.mjs";
 import { GithubClient } from "../lib/github.mjs";
-import {
+import { pins, testPins } from "./approval-pins.mjs";
+
+mock.module(new URL("../lib/approval-pins.mjs", import.meta.url).href, {
+  exports: { SHIPPED_PINS: testPins },
+});
+
+const { branchRuleTypes, filledRulesetTemplates, RULESET_TEMPLATES, rulesetSpecSha256 } = await import("../lib/ruleset-spec.mjs");
+const {
   APPROVAL_CHANNEL_ID,
   APPROVER_SLACK_ID,
   BOT_USER_ID,
@@ -41,8 +47,7 @@ import {
   validateRequest,
   verifyApproval,
   appCommitListOk,
-} from "../lib/owner-approval.mjs";
-import { pins, testPins } from "./approval-pins.mjs";
+} = await import("../lib/owner-approval.mjs");
 
 const SLACK_APP = testPins.slackAppId;
 
@@ -182,6 +187,7 @@ function approvalGithub(identity) {
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
       const ref = parsed.searchParams.get("ref");
       if (/^[0-9a-f]{40}$/.test(ref ?? "")) {
+        if (state.throwContentsFor === ref) return http({ message: "unavailable" }, 500);
         for (const [key, commits] of state.history) {
           if (!key.endsWith(`:${filePath}`)) continue;
           const commit = commits.find((item) => item.sha === ref);
@@ -564,7 +570,9 @@ test("the clicker must be U0CFRUV378D and must not be a bot", async () => {
   assert.equal(recordPuts(other.github.client).length, 0);
 
   const bot = seedReady();
-  const botClick = await handleApprovalClick(click(bot, approveButton(bot.request), { isBot: true }));
+  bot.slack = slackDouble({ users: { [APPROVER]: { id: APPROVER, is_bot: true } } });
+  seedSlack(bot.slack, bot.refs);
+  const botClick = await handleApprovalClick(click(bot, approveButton(bot.request), { isBot: false }));
   assert.equal(botClick.reason, "bot click");
   assert.equal(recordPuts(bot.github.client).length, 0);
 
@@ -574,6 +582,24 @@ test("the clicker must be U0CFRUV378D and must not be a bot", async () => {
   const disguised = await handleApprovalClick(click(lookedUp, approveButton(lookedUp.request), { isBot: undefined }));
   assert.equal(disguised.reason, "bot click");
   assert.equal(recordPuts(lookedUp.github.client).length, 0);
+});
+
+test("caller pins, isBot, and userId do not replace the shipped checks", async () => {
+  const setup = seedReady();
+  const recorded = await handleApprovalClick(click(setup, approveButton(setup.request), {
+    pins: pins({ appId: 99, botLogin: "cursor[bot]", botUserId: 99, slackAppId: "NOPE" }),
+    isBot: true,
+    userId: APPROVER,
+  }));
+  assert.equal(recorded.recorded, true);
+  assert.equal(setup.slack.calls.some((call) => call.method === "users.info" && call.body.user === APPROVER), true);
+
+  const renamed = seedReady();
+  renamed.slack = slackDouble({ users: { [APPROVER]: { id: "U0OTHER", is_bot: false } } });
+  seedSlack(renamed.slack, renamed.refs);
+  const ignoredId = await handleApprovalClick(click(renamed, approveButton(renamed.request), { userId: APPROVER, isBot: false }));
+  assert.equal(ignoredId.reason, "clicker is not the approver");
+  assert.equal(ignoredId.recorded, false);
 });
 
 test("wrong card, foreign author, tampered hash, and replay write nothing", async () => {
@@ -730,14 +756,23 @@ test("connector mode, a missing signing secret, and a non-app identity record no
     assertNoMergeOrDeploy(setup.github.client);
   }
 
-  const partial = seedReady();
-  partial.github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
-  const refused = await handleApprovalClick(click(partial, approveButton(partial.request), {
-    pins: pins({ botLogin: "<PH:github-app-bot-login>", botUserId: "<PH:github-app-bot-user-id>" }),
-  }));
-  assert.equal(refused.reason, "personal-token identity");
-  assert.equal(refused.recorded, false);
-  assert.equal(recordPuts(partial.github.client).length, 0);
+  const savedLogin = testPins.botLogin;
+  const savedUserId = testPins.botUserId;
+  testPins.botLogin = "<PH:github-app-bot-login>";
+  testPins.botUserId = "<PH:github-app-bot-user-id>";
+  try {
+    const partial = seedReady();
+    partial.github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
+    const refused = await handleApprovalClick(click(partial, approveButton(partial.request), {
+      pins: pins({ appId: 1, botLogin: "iso-workflows[bot]", botUserId: 1 }),
+    }));
+    assert.equal(refused.reason, "personal-token identity");
+    assert.equal(refused.recorded, false);
+    assert.equal(recordPuts(partial.github.client).length, 0);
+  } finally {
+    testPins.botLogin = savedLogin;
+    testPins.botUserId = savedUserId;
+  }
 });
 
 test("filing posts both surfaces from the pinned blob and the placeholder channel refuses", async () => {
@@ -791,23 +826,28 @@ test("filing posts both surfaces from the pinned blob and the placeholder channe
   });
   assert.equal(again.status, "already-filed");
   assert.equal(slack.calls.filter((call) => call.method === "chat.postMessage").length, 2);
-  const unpinned = approvalGithub();
-  const quiet = slackDouble();
-  storeText(unpinned, REQUESTS_BRANCH, "approvals/requests/iso-req-1.json", `${JSON.stringify(request)}\n`);
-  const blockedPin = await deliverApprovalRequest({
-    pins: testPins,
-    requestId: "iso-req-1",
-    channelId: CENTRAL,
-    threadChannel: THREAD,
-    threadTs: THREAD_PARENT,
-    client: unpinned.client,
-    slack: quiet,
-    env: ENV,
-    pins: pins({ slackAppId: "<PH:slack-app-id>" }),
-  });
-  assert.equal(blockedPin.reason, "slack app pin is unfilled");
-  assert.equal(blockedPin.posted, false);
-  assert.equal(quiet.calls.some((call) => call.method === "chat.postMessage"), false);
+  const savedSlackApp = testPins.slackAppId;
+  testPins.slackAppId = "<PH:slack-app-id>";
+  try {
+    const unpinned = approvalGithub();
+    const quiet = slackDouble();
+    storeText(unpinned, REQUESTS_BRANCH, "approvals/requests/iso-req-1.json", `${JSON.stringify(request)}\n`);
+    const blockedPin = await deliverApprovalRequest({
+      requestId: "iso-req-1",
+      channelId: CENTRAL,
+      threadChannel: THREAD,
+      threadTs: THREAD_PARENT,
+      client: unpinned.client,
+      slack: quiet,
+      env: ENV,
+      pins: pins({ slackAppId: SLACK_APP }),
+    });
+    assert.equal(blockedPin.reason, "slack app pin is unfilled");
+    assert.equal(blockedPin.posted, false);
+    assert.equal(quiet.calls.some((call) => call.method === "chat.postMessage"), false);
+  } finally {
+    testPins.slackAppId = savedSlackApp;
+  }
 
   const connector = await deliverApprovalRequest({
     pins: testPins,
@@ -888,20 +928,21 @@ test("a pending statement is plain text and a decided card has a fixed block id"
 });
 
 test("only the ISO Workflows bot authors a card", async () => {
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }, testPins), null);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }, testPins), BOT_USER_ID);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID }, testPins), null);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP }, testPins), BOT_USER_ID);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" }, testPins), null);
-  assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }, testPins), null);
-  assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }, testPins), null);
-  assert.equal(authorFromSlackMessage({}, testPins), null);
-  assert.equal(authorFromSlackMessage({ user: "U0OTHER", bot_id: ISO_WORKFLOWS_BOT_ID }, testPins), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID }), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP }), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" }), null);
+  assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), null);
+  assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }), null);
+  assert.equal(authorFromSlackMessage({}), null);
+  assert.equal(authorFromSlackMessage({ user: "U0OTHER", bot_id: ISO_WORKFLOWS_BOT_ID }), null);
   for (const message of [
     { bot_id: "BOTHERAPP" },
     {},
     { user: "U0OTHER" },
     { user: BOT },
+    { user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID },
     { user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" },
   ]) {
     const setup = seedReady();
@@ -1378,6 +1419,7 @@ test("a supersede is refused when the old card is still live, already recorded, 
     storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, goodLock);
     github.state.files.delete(oldRecordKey);
     older.text = olderText;
+    github.state.throwContentsFor = undefined;
   }
   async function refuseFilingAndClick() {
     const posts = slack.calls.filter((call) => call.method === "chat.postMessage").length;
@@ -1415,6 +1457,10 @@ test("a supersede is refused when the old card is still live, already recorded, 
   await refuseFilingAndClick();
   restore();
 
+  github.state.throwContentsFor = older.sha;
+  await refuseFilingAndClick();
+  restore();
+
   const recorded = await handleApprovalClick(click(
     { github, slack, request: secondRequest },
     button,
@@ -1446,6 +1492,10 @@ test("a supersede is refused when the old card is still live, already recorded, 
   restore();
 
   older.text = undefined;
+  await refuseVerifyAndClick();
+  restore();
+
+  github.state.throwContentsFor = older.sha;
   await refuseVerifyAndClick();
   restore();
   assert.equal((await verifyApproval({ pins: testPins, client: github.client, action })).ok, true);

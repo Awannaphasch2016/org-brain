@@ -21,7 +21,7 @@
     "info": "pnpm prepare:knowledge && eve info --agent specification",
     "prepare:knowledge": "node scripts/prepare-knowledge.mjs",
     "start": "eve start",
-    "test": "node --test --test-reporter spec tests/*.test.mjs scripts/*.test.mjs",
+    "test": "node --experimental-test-module-mocks --test --test-reporter spec tests/*.test.mjs scripts/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "verify:knowledge": "node scripts/verify-knowledge.mjs",
     "verify:source-immutability": "node scripts/verify-source-immutability.mjs"
