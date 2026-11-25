@@ -1322,6 +1322,135 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
   assert.equal((await verifyApproval({ pins: testPins, client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
 });
 
+test("a supersede is refused when the old card is still live, already recorded, or unreadable", async () => {
+  const shorter = formatIct(new Date(NOW.getTime() + 60 * 60 * 1000));
+  const late = new Date(NOW.getTime() + 2 * 60 * 60 * 1000);
+  function bootstrapRequest(requestId, cardExpiresAt) {
+    const target = {
+      packetId: "isobp-20261125-01",
+      packetHash: PACKET_HASH,
+      mergeSha40: HEAD,
+      deploymentId: "dpl_1",
+      packetExpiresAt: BOOTSTRAP_PACKET_EXPIRES_AT,
+      cardExpiresAt,
+    };
+    return validateRequest(requestDocument({
+      key: "bootstrap",
+      kind: "bootstrap-reconfirm",
+      title: bootstrapTitle(),
+      statement: bootstrapStatement(target),
+      target,
+    }, requestId));
+  }
+  async function fileBootstrap(github, slack, request, now) {
+    storeText(github, REQUESTS_BRANCH, `approvals/requests/${request.requestId}.json`, `${JSON.stringify(request)}\n`);
+    return deliverApprovalRequest({
+      pins: testPins,
+      requestId: request.requestId,
+      channelId: CENTRAL,
+      threadChannel: THREAD,
+      threadTs: THREAD_PARENT,
+      client: github.client,
+      slack,
+      env: ENV,
+      now,
+    });
+  }
+
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const firstRequest = bootstrapRequest("isobr-20261125-01", shorter);
+  assert.equal((await fileBootstrap(github, slack, firstRequest, NOW)).status, "filed");
+  const secondRequest = bootstrapRequest("isobr-20261125-02", formatIct(new Date(late.getTime() + 60 * 60 * 1000)));
+  assert.equal((await fileBootstrap(github, slack, secondRequest, late)).status, "filed");
+  const lockKey = `${RECORDS_BRANCH}:approvals/bootstrap/${PACKET_HASH}.json`;
+  const goodLock = github.state.files.get(lockKey);
+  const older = github.state.history.get(lockKey).at(-1);
+  const olderText = older.text;
+  const pending = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/isobr-20261125-02.json`));
+  const central = pending.actions.bootstrap.cardRefs.find((ref) => ref.surface === "central");
+  const button = renderApprovalCard({ ...secondRequest.actions[0], requestId: secondRequest.requestId }).blocks
+    .find((block) => block.type === "actions").elements[0];
+  const oldRecordKey = `${RECORDS_BRANCH}:approvals/records/isobr-20261125-01/bootstrap.json`;
+  const action = { ...secondRequest.actions[0], requestId: secondRequest.requestId };
+
+  function restore() {
+    storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, goodLock);
+    github.state.files.delete(oldRecordKey);
+    older.text = olderText;
+  }
+  async function refuseFilingAndClick() {
+    const posts = slack.calls.filter((call) => call.method === "chat.postMessage").length;
+    const puts = recordPuts(github.client).length;
+    const filed = await fileBootstrap(
+      github,
+      slack,
+      bootstrapRequest("isobr-next", formatIct(new Date(late.getTime() + 3 * 60 * 60 * 1000))),
+      new Date(late.getTime() + 60 * 60 * 1000),
+    );
+    assert.equal(filed.reason, "RECORD_PROVENANCE_FAIL");
+    assert.equal(filed.posted, false);
+    assert.equal(slack.calls.filter((call) => call.method === "chat.postMessage").length, posts);
+    const clicked = await handleApprovalClick(click(
+      { github, slack, request: secondRequest },
+      button,
+      { channelId: central.channel, messageTs: central.ts, threadTs: central.threadTs, now: late },
+    ));
+    assert.equal(clicked.reason, "RECORD_PROVENANCE_FAIL");
+    assert.equal(clicked.recorded, false);
+    assert.equal(recordPuts(github.client).length, puts);
+  }
+
+  const stillLive = JSON.parse(goodLock);
+  stillLive.filedAt = shorter;
+  storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, `${JSON.stringify(stillLive, null, 2)}\n`);
+  await refuseFilingAndClick();
+  restore();
+
+  storeText(github, RECORDS_BRANCH, "approvals/records/isobr-20261125-01/bootstrap.json", "{}\n");
+  await refuseFilingAndClick();
+  restore();
+
+  older.text = undefined;
+  await refuseFilingAndClick();
+  restore();
+
+  const recorded = await handleApprovalClick(click(
+    { github, slack, request: secondRequest },
+    button,
+    { channelId: central.channel, messageTs: central.ts, threadTs: central.threadTs, now: late },
+  ));
+  assert.equal(recorded.recorded, true);
+
+  async function refuseVerifyAndClick() {
+    github.client.identity = { kind: "personal-token", botLogin: "anak" };
+    assert.equal((await verifyApproval({ pins: testPins, client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
+    github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
+    const puts = recordPuts(github.client).length;
+    const clicked = await handleApprovalClick(click(
+      { github, slack, request: secondRequest },
+      button,
+      { channelId: central.channel, messageTs: central.ts, threadTs: central.threadTs, now: late },
+    ));
+    assert.equal(clicked.reason, "RECORD_PROVENANCE_FAIL");
+    assert.equal(clicked.recorded, false);
+    assert.equal(recordPuts(github.client).length, puts);
+  }
+
+  storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, `${JSON.stringify(stillLive, null, 2)}\n`);
+  await refuseVerifyAndClick();
+  restore();
+
+  storeText(github, RECORDS_BRANCH, "approvals/records/isobr-20261125-01/bootstrap.json", "{}\n");
+  await refuseVerifyAndClick();
+  restore();
+
+  older.text = undefined;
+  await refuseVerifyAndClick();
+  restore();
+  assert.equal((await verifyApproval({ pins: testPins, client: github.client, action })).ok, true);
+});
+
 test("a personal token claims a marker and can verify an App-written record", async () => {
   const personal = approvalGithub({ kind: "personal-token", botLogin: "anak", label: "personal-token (anak)" });
   const first = await claimExecution(personal.client, { requestId: "iso-req-pt", key: "merge", executorId: "coding-agent", now: NOW });
