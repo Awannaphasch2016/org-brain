@@ -45,7 +45,8 @@ import {
 
 const useAppPinsForTests = globalThis[Symbol.for("org-brain.useAppPinsForTests")];
 if (typeof useAppPinsForTests !== "function") throw new Error("test pin hook missing");
-useAppPinsForTests({ appId: 1, botLogin: "iso-workflows[bot]", botUserId: 1 });
+const SLACK_APP = "A0TEST";
+useAppPinsForTests({ appId: 1, botLogin: "iso-workflows[bot]", botUserId: 1, slackAppId: SLACK_APP });
 
 const root = new URL("..", import.meta.url);
 const APPROVER = APPROVER_SLACK_ID;
@@ -122,6 +123,7 @@ function approvalGithub(identity) {
         const history = state.history.get(key) ?? [];
         history.unshift({
           sha: sha1(`${history.length}:${text}`),
+          text,
           author: { login, id: 1 },
           committer: { login, id: 1 },
           commit: { verification: { verified: true, reason: "valid" } },
@@ -181,6 +183,17 @@ function approvalGithub(identity) {
     if (method === "GET" && pathname.includes("/contents/")) {
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
       const ref = parsed.searchParams.get("ref");
+      if (/^[0-9a-f]{40}$/.test(ref ?? "")) {
+        for (const [key, commits] of state.history) {
+          if (!key.endsWith(`:${filePath}`)) continue;
+          const commit = commits.find((item) => item.sha === ref);
+          if (!commit?.text) continue;
+          const blob = sha1(commit.text);
+          state.blobs.set(blob, commit.text);
+          return http({ encoding: "base64", content: Buffer.from(commit.text).toString("base64"), sha: blob, type: "file" });
+        }
+        return http({ message: "Not Found" }, 404);
+      }
       const text = state.files.get(`${ref}:${filePath}`);
       if (text == null) {
         const prefix = `${ref}:${filePath.replace(/\/$/, "")}/`;
@@ -230,8 +243,8 @@ function slackDouble({ users } = {}) {
       }
       if (method === "chat.postMessage") {
         const ts = body.ts ?? `${1700000000 + messages.length}.000100`;
-        messages.push({ channel: body.channel, ts, threadTs: body.thread_ts ?? ts, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
-        return { ok: true, ts, channel: body.channel, message: { user: BOT, ts, bot_id: ISO_WORKFLOWS_BOT_ID } };
+        messages.push({ channel: body.channel, ts, threadTs: body.thread_ts ?? ts, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP });
+        return { ok: true, ts, channel: body.channel, message: { user: BOT, ts, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP } };
       }
       if (method === "chat.update") {
         messages.forEach((item) => {
@@ -309,7 +322,7 @@ function seedSlack(slack, refs, user = BOT) {
       ts: ref.ts,
       threadTs: ref.threadTs,
       user,
-      ...(user === BOT ? { bot_id: ISO_WORKFLOWS_BOT_ID } : {}),
+      ...(user === BOT ? { bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP } : {}),
     });
   }
 }
@@ -784,6 +797,26 @@ test("filing posts both surfaces from the pinned blob and the placeholder channe
   });
   assert.equal(again.status, "already-filed");
   assert.equal(slack.calls.filter((call) => call.method === "chat.postMessage").length, 2);
+  const previousPins = useAppPinsForTests({ slackAppId: "<PH:slack-app-id>" });
+  try {
+    const unpinned = approvalGithub();
+    const quiet = slackDouble();
+    storeText(unpinned, REQUESTS_BRANCH, "approvals/requests/iso-req-1.json", `${JSON.stringify(request)}\n`);
+    const blockedPin = await deliverApprovalRequest({
+      requestId: "iso-req-1",
+      channelId: CENTRAL,
+      threadChannel: THREAD,
+      threadTs: THREAD_PARENT,
+      client: unpinned.client,
+      slack: quiet,
+      env: ENV,
+    });
+    assert.equal(blockedPin.reason, "slack app pin is unfilled");
+    assert.equal(blockedPin.posted, false);
+    assert.equal(quiet.calls.some((call) => call.method === "chat.postMessage"), false);
+  } finally {
+    useAppPinsForTests(previousPins);
+  }
 
   const connector = await deliverApprovalRequest({
     requestId: "iso-req-1",
@@ -866,7 +899,8 @@ test("only the ISO Workflows bot authors a card", async () => {
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }), null);
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }), BOT_USER_ID);
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID }), null);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0TEST" }), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP }), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" }), null);
   assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), null);
   assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }), null);
   assert.equal(authorFromSlackMessage({}), null);
@@ -876,7 +910,7 @@ test("only the ISO Workflows bot authors a card", async () => {
     {},
     { user: "U0OTHER" },
     { user: BOT },
-    { user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0TEST" },
+    { user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" },
   ]) {
     const setup = seedReady();
     setup.slack.messages.length = 0;
@@ -890,7 +924,7 @@ test("only the ISO Workflows bot authors a card", async () => {
   const setup = seedReady();
   setup.slack.messages.length = 0;
   for (const ref of setup.refs) {
-    setup.slack.messages.push({ channel: ref.channel, ts: ref.ts, threadTs: ref.threadTs, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
+    setup.slack.messages.push({ channel: ref.channel, ts: ref.ts, threadTs: ref.threadTs, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP });
   }
   const recorded = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(recorded.recorded, true);
@@ -907,8 +941,8 @@ test("a long thread still finds the card, and a conflict can be retried", async 
       user: "U0OTHER",
     });
   }
-  setup.slack.messages.push({ channel: CENTRAL, ts: CENTRAL_TS, threadTs: CENTRAL_TS, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
-  setup.slack.messages.push({ channel: THREAD, ts: THREAD_CARD_TS, threadTs: THREAD_PARENT, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
+  setup.slack.messages.push({ channel: CENTRAL, ts: CENTRAL_TS, threadTs: CENTRAL_TS, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP });
+  setup.slack.messages.push({ channel: THREAD, ts: THREAD_CARD_TS, threadTs: THREAD_PARENT, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP });
   const recorded = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(recorded.recorded, true);
 
@@ -961,7 +995,7 @@ test("an execution marker is create-only and verifyApproval checks the decided c
   const clicked = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(clicked.recorded, true);
   assert.equal(clicked.record.cardAttestation.bot_id, ISO_WORKFLOWS_BOT_ID);
-  assert.equal(clicked.record.cardAttestation.app_id, null);
+  assert.equal(clicked.record.cardAttestation.app_id, SLACK_APP);
   assert.equal(clicked.record.cardAttestation.blockHash, undefined);
   assert.equal(clicked.record.cardAttestation.blocksSha256, sha256Hex(jcs(renderDecidedCard(clicked.record).blocks)));
   const verified = { ...setup.request.actions[0], requestId: setup.request.requestId };
@@ -1074,7 +1108,12 @@ test("a thread parent returned first does not hide the card", async () => {
     const parent = { ts: body.ts, user: APPROVER };
     const replies = setup.slack.messages
       .filter((item) => item.channel === body.channel && item.ts !== body.ts && item.ts >= body.oldest && item.ts <= body.latest)
-      .map((item) => ({ ts: item.ts, user: item.user, ...(item.bot_id ? { bot_id: item.bot_id } : {}) }));
+      .map((item) => ({
+        ts: item.ts,
+        user: item.user,
+        ...(item.bot_id ? { bot_id: item.bot_id } : {}),
+        ...(item.app_id ? { app_id: item.app_id } : {}),
+      }));
     return { ok: true, messages: [parent, ...replies].slice(0, body.limit ?? 1000) };
   };
   const result = await handleApprovalClick(click(setup, approveButton(setup.request), {
@@ -1208,6 +1247,35 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
   assert.equal(lock.requestId, "isobr-20261125-02");
   assert.equal(lock.supersedes, "isobr-20261125-01");
   assert.equal(github.state.history.get(lockKey).length, 2);
+  const goodLock = github.state.files.get(lockKey);
+  const postsBefore = slack.calls.filter((call) => call.method === "chat.postMessage").length;
+  for (const broken of [undefined, "isobr-wrong"]) {
+    const tampered = JSON.parse(goodLock);
+    if (broken === undefined) delete tampered.supersedes;
+    else tampered.supersedes = broken;
+    storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, `${JSON.stringify(tampered)}\n`);
+    const refusedFile = await fileBootstrap(
+      github,
+      slack,
+      bootstrapRequest("isobr-bad", formatIct(new Date(late.getTime() + 3 * 60 * 60 * 1000))),
+      new Date(late.getTime() + 60 * 60 * 1000),
+    );
+    assert.equal(refusedFile.reason, "RECORD_PROVENANCE_FAIL");
+    assert.equal(refusedFile.posted, false);
+    assert.equal(slack.calls.filter((call) => call.method === "chat.postMessage").length, postsBefore);
+    const pending = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/isobr-20261125-02.json`));
+    const central = pending.actions.bootstrap.cardRefs.find((ref) => ref.surface === "central");
+    const button = renderApprovalCard({ ...secondRequest.actions[0], requestId: secondRequest.requestId }).blocks
+      .find((block) => block.type === "actions").elements[0];
+    const refusedClick = await handleApprovalClick(click(
+      { github, slack, request: secondRequest },
+      button,
+      { channelId: central.channel, messageTs: central.ts, threadTs: central.threadTs, now: late },
+    ));
+    assert.equal(refusedClick.reason, "RECORD_PROVENANCE_FAIL");
+    assert.equal(refusedClick.recorded, false);
+  }
+  storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, goodLock);
   const third = await fileBootstrap(
     github,
     slack,
@@ -1230,6 +1298,24 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
   github.client.identity = { kind: "personal-token", botLogin: "anak" };
   const action = { ...secondRequest.actions[0], requestId: secondRequest.requestId };
   assert.equal((await verifyApproval({ client: github.client, action })).ok, true);
+  github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
+  for (const broken of [undefined, "isobr-wrong"]) {
+    const tampered = JSON.parse(goodLock);
+    if (broken === undefined) delete tampered.supersedes;
+    else tampered.supersedes = broken;
+    storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, `${JSON.stringify(tampered)}\n`);
+    github.client.identity = { kind: "personal-token", botLogin: "anak" };
+    assert.equal((await verifyApproval({ client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
+    github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
+    const refusedClick = await handleApprovalClick(click(
+      { github, slack, request: secondRequest },
+      button,
+      { channelId: central.channel, messageTs: central.ts, threadTs: central.threadTs, now: late },
+    ));
+    assert.equal(refusedClick.reason, "RECORD_PROVENANCE_FAIL");
+    assert.equal(refusedClick.recorded, false);
+  }
+  storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, goodLock);
   github.state.history.get(lockKey).push({
     sha: "e".repeat(40),
     author: { login: "anak", id: 9 },
@@ -1360,6 +1446,6 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
   const canonicalText = canonical.toString("utf8");
   assert.equal(canonicalText.includes("<channelId>"), true);
   assert.equal(canonicalText.includes("<approvalRowUrl>"), true);
-  assert.equal(sha256Hex(canonical), "85cde416308f92301dd0cfadb4f8f44c3e7aa59ef11e17415ef9f6fa9d91706a");
+  assert.equal(sha256Hex(canonical), "610ee66190539091fac5fa830e1c997ff3e389f320786491697f8e2994b1aff2");
   assert.equal(sha256Hex(personas), "060bb4b89c4b38d6062055a35a6456fbae6d271a70919b0a568260ea7f1ccb48");
 });

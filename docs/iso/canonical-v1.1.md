@@ -31,7 +31,7 @@ Merge to main · deploy or production change · secrets, infra or env change · 
 
 Before any Yes-Needed action, the acting agent needs all of these:
 1. an app-written record (commit author is the authenticated GitHub App's own `[bot]` login) whose `actionHash` equals the hash the agent recomputes itself from the exact action it is about to take, with `decision` = `approve`;
-2. the approval pinned to `blocksSha256`, the SHA-256 of the decided card blocks as the App recorded them at the signed click, inside that App-committed, create-only record. `verifyApproval` checks that attestation, not live Slack, so a later edit to the Slack message does not change what was approved and is not seen by verification. The attestation names bot user `U0CG2QNQRLM` and the same `requestId` and hash;
+2. the approval pinned to `blocksSha256`, the SHA-256 of the decided card blocks as the App recorded them at the signed click, inside that App-committed, create-only record. `verifyApproval` checks that attestation, not live Slack, so a later edit to the Slack message does not change what was approved and is not seen by verification. The attestation's `bot_id` and `app_id` are checked against the pins, and it names bot user `U0CG2QNQRLM` with the same `requestId` and hash;
 3. the recorded clicker is exactly `U0CFRUV378D`.
 Then it acts once: it first writes a create-only marker at `approvals/executions/<requestId>/<key>.json` on `iso-approval-executions`, and if that file already exists it does not act. Any identity with contents write may add that marker. It logs the record commit SHA and the card ts in the Compliance Log. The shared check is `verifyApproval`. If any check fails, it doesn't act and files a gap.
 
