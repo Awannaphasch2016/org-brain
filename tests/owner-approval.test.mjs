@@ -42,11 +42,9 @@ import {
   verifyApproval,
   appCommitListOk,
 } from "../lib/owner-approval.mjs";
+import { pins, testPins } from "./approval-pins.mjs";
 
-const useAppPinsForTests = globalThis[Symbol.for("org-brain.useAppPinsForTests")];
-if (typeof useAppPinsForTests !== "function") throw new Error("test pin hook missing");
-const SLACK_APP = "A0TEST";
-useAppPinsForTests({ appId: 1, botLogin: "iso-workflows[bot]", botUserId: 1, slackAppId: SLACK_APP });
+const SLACK_APP = testPins.slackAppId;
 
 const root = new URL("..", import.meta.url);
 const APPROVER = APPROVER_SLACK_ID;
@@ -358,6 +356,7 @@ function click(setup, button, overrides = {}) {
     now: overrides.now ?? NOW,
     client: setup.github.client,
     slack: setup.slack,
+    pins: overrides.pins ?? testPins,
   };
 }
 
@@ -731,21 +730,14 @@ test("connector mode, a missing signing secret, and a non-app identity record no
     assertNoMergeOrDeploy(setup.github.client);
   }
 
-  const previousPins = useAppPinsForTests({
-    appId: 1,
-    botLogin: "<PH:github-app-bot-login>",
-    botUserId: "<PH:github-app-bot-user-id>",
-  });
-  try {
-    const partial = seedReady();
-    partial.github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
-    const refused = await handleApprovalClick(click(partial, approveButton(partial.request)));
-    assert.equal(refused.reason, "personal-token identity");
-    assert.equal(refused.recorded, false);
-    assert.equal(recordPuts(partial.github.client).length, 0);
-  } finally {
-    useAppPinsForTests(previousPins);
-  }
+  const partial = seedReady();
+  partial.github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
+  const refused = await handleApprovalClick(click(partial, approveButton(partial.request), {
+    pins: pins({ botLogin: "<PH:github-app-bot-login>", botUserId: "<PH:github-app-bot-user-id>" }),
+  }));
+  assert.equal(refused.reason, "personal-token identity");
+  assert.equal(refused.recorded, false);
+  assert.equal(recordPuts(partial.github.client).length, 0);
 });
 
 test("filing posts both surfaces from the pinned blob and the placeholder channel refuses", async () => {
@@ -768,6 +760,7 @@ test("filing posts both surfaces from the pinned blob and the placeholder channe
   storeText(github, REQUESTS_BRANCH, "approvals/requests/iso-req-1.json", `${JSON.stringify(request)}\n`);
   const slack = slackDouble();
   const filed = await deliverApprovalRequest({
+    pins: testPins,
     requestId: "iso-req-1",
     channelId: CENTRAL,
     threadChannel: THREAD,
@@ -787,6 +780,7 @@ test("filing posts both surfaces from the pinned blob and the placeholder channe
   assert.equal([...github.state.files.keys()].some((key) => key.includes(":approvals/records/")), false);
   assertNoMergeOrDeploy(github.client);
   const again = await deliverApprovalRequest({
+    pins: testPins,
     requestId: "iso-req-1",
     channelId: CENTRAL,
     threadChannel: THREAD,
@@ -797,28 +791,26 @@ test("filing posts both surfaces from the pinned blob and the placeholder channe
   });
   assert.equal(again.status, "already-filed");
   assert.equal(slack.calls.filter((call) => call.method === "chat.postMessage").length, 2);
-  const previousPins = useAppPinsForTests({ slackAppId: "<PH:slack-app-id>" });
-  try {
-    const unpinned = approvalGithub();
-    const quiet = slackDouble();
-    storeText(unpinned, REQUESTS_BRANCH, "approvals/requests/iso-req-1.json", `${JSON.stringify(request)}\n`);
-    const blockedPin = await deliverApprovalRequest({
-      requestId: "iso-req-1",
-      channelId: CENTRAL,
-      threadChannel: THREAD,
-      threadTs: THREAD_PARENT,
-      client: unpinned.client,
-      slack: quiet,
-      env: ENV,
-    });
-    assert.equal(blockedPin.reason, "slack app pin is unfilled");
-    assert.equal(blockedPin.posted, false);
-    assert.equal(quiet.calls.some((call) => call.method === "chat.postMessage"), false);
-  } finally {
-    useAppPinsForTests(previousPins);
-  }
+  const unpinned = approvalGithub();
+  const quiet = slackDouble();
+  storeText(unpinned, REQUESTS_BRANCH, "approvals/requests/iso-req-1.json", `${JSON.stringify(request)}\n`);
+  const blockedPin = await deliverApprovalRequest({
+    pins: testPins,
+    requestId: "iso-req-1",
+    channelId: CENTRAL,
+    threadChannel: THREAD,
+    threadTs: THREAD_PARENT,
+    client: unpinned.client,
+    slack: quiet,
+    env: ENV,
+    pins: pins({ slackAppId: "<PH:slack-app-id>" }),
+  });
+  assert.equal(blockedPin.reason, "slack app pin is unfilled");
+  assert.equal(blockedPin.posted, false);
+  assert.equal(quiet.calls.some((call) => call.method === "chat.postMessage"), false);
 
   const connector = await deliverApprovalRequest({
+    pins: testPins,
     requestId: "iso-req-1",
     channelId: CENTRAL,
     threadChannel: THREAD,
@@ -896,15 +888,15 @@ test("a pending statement is plain text and a decided card has a fixed block id"
 });
 
 test("only the ISO Workflows bot authors a card", async () => {
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }), null);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }), BOT_USER_ID);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID }), null);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP }), BOT_USER_ID);
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" }), null);
-  assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), null);
-  assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }), null);
-  assert.equal(authorFromSlackMessage({}), null);
-  assert.equal(authorFromSlackMessage({ user: "U0OTHER", bot_id: ISO_WORKFLOWS_BOT_ID }), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }, testPins), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }, testPins), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID }, testPins), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP }, testPins), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" }, testPins), null);
+  assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }, testPins), null);
+  assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }, testPins), null);
+  assert.equal(authorFromSlackMessage({}, testPins), null);
+  assert.equal(authorFromSlackMessage({ user: "U0OTHER", bot_id: ISO_WORKFLOWS_BOT_ID }, testPins), null);
   for (const message of [
     { bot_id: "BOTHERAPP" },
     {},
@@ -999,14 +991,14 @@ test("an execution marker is create-only and verifyApproval checks the decided c
   assert.equal(clicked.record.cardAttestation.blockHash, undefined);
   assert.equal(clicked.record.cardAttestation.blocksSha256, sha256Hex(jcs(renderDecidedCard(clicked.record).blocks)));
   const verified = { ...setup.request.actions[0], requestId: setup.request.requestId };
-  assert.equal((await verifyApproval({ client: setup.github.client, action: verified })).ok, true);
+  assert.equal((await verifyApproval({ pins: testPins, client: setup.github.client, action: verified })).ok, true);
   const stored = setup.github.state.files.get(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`);
   storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify({ ...clicked.record, actionHash: "0".repeat(64) }));
-  assert.equal((await verifyApproval({ client: setup.github.client, action: verified })).reason, "RECORD_MISMATCH");
+  assert.equal((await verifyApproval({ pins: testPins, client: setup.github.client, action: verified })).reason, "RECORD_MISMATCH");
   const tamperedCard = JSON.parse(stored);
   tamperedCard.cardAttestation.bot_id = "B0OTHER";
   storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(tamperedCard));
-  assert.equal((await verifyApproval({ client: setup.github.client, action: verified })).reason, "card not by the bot");
+  assert.equal((await verifyApproval({ pins: testPins, client: setup.github.client, action: verified })).reason, "card not by the bot");
 
   const filed = approvalGithub();
   storeText(filed, REQUESTS_BRANCH, "approvals/requests/iso-req-6.json", `${JSON.stringify(validateRequest(requestDocument({
@@ -1017,6 +1009,7 @@ test("an execution marker is create-only and verifyApproval checks the decided c
     target: { rowUrl: "https://app.notion.com/p/iso-run-1", contentSha256: RUN_HASH, verifierNoteUrl: "https://app.notion.com/p/iso-run-1-note" },
   }, "iso-req-6")))}\n`);
   const experiment = await deliverApprovalRequest({
+    pins: testPins,
     requestId: "iso-req-6",
     channelId: CENTRAL,
     threadChannel: THREAD,
@@ -1146,6 +1139,7 @@ test("a bootstrap card files one lock and an expired click writes no record", as
   storeText(github, REQUESTS_BRANCH, "approvals/requests/isobr-20261125-01.json", `${JSON.stringify(request)}\n`);
   const slack = slackDouble();
   const filed = await deliverApprovalRequest({
+    pins: testPins,
     requestId: "isobr-20261125-01",
     channelId: CENTRAL,
     threadChannel: THREAD,
@@ -1211,6 +1205,7 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
   async function fileBootstrap(github, slack, request, now) {
     storeText(github, REQUESTS_BRANCH, `approvals/requests/${request.requestId}.json`, `${JSON.stringify(request)}\n`);
     return deliverApprovalRequest({
+    pins: testPins,
       requestId: request.requestId,
       channelId: CENTRAL,
       threadChannel: THREAD,
@@ -1219,6 +1214,7 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
       slack,
       env: ENV,
       now,
+      pins: testPins,
     });
   }
 
@@ -1297,7 +1293,7 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
   assert.equal(recorded.recorded, true);
   github.client.identity = { kind: "personal-token", botLogin: "anak" };
   const action = { ...secondRequest.actions[0], requestId: secondRequest.requestId };
-  assert.equal((await verifyApproval({ client: github.client, action })).ok, true);
+  assert.equal((await verifyApproval({ pins: testPins, client: github.client, action })).ok, true);
   github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
   for (const broken of [undefined, "isobr-wrong"]) {
     const tampered = JSON.parse(goodLock);
@@ -1305,7 +1301,7 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
     else tampered.supersedes = broken;
     storeText(github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, `${JSON.stringify(tampered)}\n`);
     github.client.identity = { kind: "personal-token", botLogin: "anak" };
-    assert.equal((await verifyApproval({ client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
+    assert.equal((await verifyApproval({ pins: testPins, client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
     github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
     const refusedClick = await handleApprovalClick(click(
       { github, slack, request: secondRequest },
@@ -1323,7 +1319,7 @@ test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays 
     commit: { verification: { verified: true } },
   });
   github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
-  assert.equal((await verifyApproval({ client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
+  assert.equal((await verifyApproval({ pins: testPins, client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
 });
 
 test("a personal token claims a marker and can verify an App-written record", async () => {
@@ -1345,15 +1341,15 @@ test("a personal token claims a marker and can verify an App-written record", as
   assert.equal(clicked.recorded, true);
   setup.github.client.identity = { kind: "personal-token", botLogin: "anak" };
   const action = { ...setup.request.actions[0], requestId: setup.request.requestId };
-  assert.equal((await verifyApproval({ client: setup.github.client, action })).ok, true);
+  assert.equal((await verifyApproval({ pins: testPins, client: setup.github.client, action })).ok, true);
 });
 
 test("compare accepts an ancestor of main and a second commit is not app provenance", async () => {
   const source = await readFile(new URL("lib/owner-approval.mjs", root), "utf8");
   assert.equal(source.includes("VERCEL_TOKEN"), false);
   assert.equal(source.includes("api.vercel.com"), false);
-  assert.equal(source.includes("export function useAppPinsForTests"), false);
-  assert.equal(source.includes("export { useAppPinsForTests"), false);
+  assert.equal(source.includes("NODE_TEST_CONTEXT"), false);
+  assert.equal(source.includes("useAppPinsForTests"), false);
   for (const status of ["behind", "identical"]) {
     assert.equal(await shaReachableFromMain({ request: async () => ({ status }) }, "c".repeat(40)), true);
   }
@@ -1375,6 +1371,7 @@ test("compare accepts an ancestor of main and a second commit is not app provena
   github.state.compareStatus = "identical";
   storeText(github, REQUESTS_BRANCH, "approvals/requests/iso-req-rb.json", `${JSON.stringify(rollback)}\n`);
   const filed = await deliverApprovalRequest({
+    pins: testPins,
     requestId: "iso-req-rb",
     channelId: CENTRAL,
     threadChannel: THREAD,
@@ -1389,6 +1386,7 @@ test("compare accepts an ancestor of main and a second commit is not app provena
   again.state.compareStatus = "diverged";
   storeText(again, REQUESTS_BRANCH, "approvals/requests/iso-req-rb.json", `${JSON.stringify(rollback)}\n`);
   const refused = await deliverApprovalRequest({
+    pins: testPins,
     requestId: "iso-req-rb",
     channelId: CENTRAL,
     threadChannel: THREAD,
