@@ -23,7 +23,7 @@ Merge to main · deploy or production change · secrets, infra or env change · 
 
 - **Approval app:** the existing ISO Workflows Slack app (bot user `U0CG2QNQRLM`). It replaces the "ISO Approvals app" named in v1. There is no separate approvals app.
 - **Approver:** Anak, Slack user `U0CFRUV378D`, and nobody else.
-- **Surface (a), central list:** the private channel #iso-approvals (`<channelId>`). Its only members are Anak (`U0CFRUV378D`) and the bot (`U0CG2QNQRLM`).
+- **Surface (a), central list:** the private channel #iso-approvals (`C0CLPUMNYUD`). Its only members are Anak (`U0CFRUV378D`) and the bot (`U0CG2QNQRLM`).
 - **Surface (b), in-thread cards:** the same card, posted by the bot in the eve thread the request came from (channel `C0CG6SG8PNW`).
 - **Record of truth:** the app-written record, one per action, at `approvals/records/<requestId>/<key>.json` on branch `iso-approval-records` of Awannaphasch2016/org-brain, committed by the ISO Workflows GitHub App (commit author is the authenticated GitHub App's own `[bot]` login). Neither Slack message is the record; both are views of it. A click records a decision; it never merges or deploys.
 
@@ -67,7 +67,7 @@ The approval route is live only from the time the changelog of this page records
 
 ## One-time bootstrap exception
 
-One-time bootstrap exception: Anak's approval of Bootstrap Packet `isobp-20261125-01`, given in his ISO Workflow Lead 1:1 chat and recorded verbatim in Blocking Questions row `<approvalRowUrl>`, authorizes only the actions B1–B4 of that packet with the hash shown on its first Slack card. It expires at the first of: the route being marked live after Anak's Approve on that card; Anak's Reject on that card; any change to the packet; 2026-12-09 23:59 ICT. It authorizes nothing else.
+One-time bootstrap exception: Anak's approval of Bootstrap Packet `isobp-20261125-01`, given in his ISO Workflow Lead 1:1 chat and recorded verbatim in Blocking Questions row `https://app.notion.com/p/4239a2439a1d8128989dd9b2c0e5faa2`, authorizes only the actions B1–B4 of that packet with the hash shown on its first Slack card. It expires at the first of: the route being marked live after Anak's Approve on that card; Anak's Reject on that card; any change to the packet; 2026-12-09 23:59 ICT. It authorizes nothing else.
 
 This exception replaces v1's bootstrap exception ("Anak's approval in Bot Father's chat"). On Anak's Reject on the re-confirmation card, Bot Father restores v1 and the route stays inert.
 

@@ -4,10 +4,14 @@ import { readFile } from "node:fs/promises";
 import test, { mock } from "node:test";
 import { gateApproverIds } from "../lib/gate-actions.mjs";
 import { GithubClient } from "../lib/github.mjs";
+import { approvalEnv, approvalNow, testClock } from "./approval-clock.mjs";
 import { pins, testPins } from "./approval-pins.mjs";
 
 mock.module(new URL("../lib/approval-pins.mjs", import.meta.url).href, {
   exports: { SHIPPED_PINS: testPins },
+});
+mock.module(new URL("../lib/approval-clock.mjs", import.meta.url).href, {
+  exports: { approvalNow, approvalEnv },
 });
 
 const { branchRuleTypes, filledRulesetTemplates, RULESET_TEMPLATES, rulesetSpecSha256 } = await import("../lib/ruleset-spec.mjs");
@@ -24,7 +28,7 @@ const {
   approvalChannelConfigured,
   approvalRouteMode,
   canonicalRunDeclaration,
-  claimExecution,
+  claimExecution: claimExecutionRaw,
   createApprovalHandlers,
   decidedBlockId,
   BOOTSTRAP_PACKET_EXPIRES_AT,
@@ -32,10 +36,10 @@ const {
   bootstrapCardExpiryAllowed,
   bootstrapStatement,
   bootstrapTitle,
-  deliverApprovalRequest,
-  fileApprovalRequest,
+  deliverApprovalRequest: deliverApprovalRequestRaw,
+  fileApprovalRequest: fileApprovalRequestRaw,
   formatIct,
-  handleApprovalClick,
+  handleApprovalClick: handleApprovalClickRaw,
   jcs,
   packetHash,
   parseApprovalRequestMention,
@@ -57,6 +61,32 @@ const BOT = BOT_USER_ID;
 const SECRET = "test-signing-secret";
 const ENV = { SLACK_SIGNING_SECRET: SECRET };
 const NOW = new Date("2026-11-25T07:00:00.000Z");
+
+function applyClock(input) {
+  if (input && input.now != null) testClock.now = input.now instanceof Date ? input.now : new Date(input.now);
+  else testClock.now = NOW;
+  testClock.env = input && input.env != null ? input.env : ENV;
+}
+
+function handleApprovalClick(input) {
+  applyClock(input);
+  return handleApprovalClickRaw(input);
+}
+
+function deliverApprovalRequest(input) {
+  applyClock(input);
+  return deliverApprovalRequestRaw(input);
+}
+
+function fileApprovalRequest(input) {
+  applyClock(input);
+  return fileApprovalRequestRaw(input);
+}
+
+function claimExecution(client, input) {
+  applyClock(input);
+  return claimExecutionRaw(client, input);
+}
 const ICT = "2026-11-25T14:00:00.000+07:00";
 const CENTRAL = "C0ISOAPPROV";
 const THREAD = THREAD_SURFACE_CHANNELS[0];
@@ -775,9 +805,9 @@ test("connector mode, a missing signing secret, and a non-app identity record no
   }
 });
 
-test("filing posts both surfaces from the pinned blob and the placeholder channel refuses", async () => {
-  assert.equal(APPROVAL_CHANNEL_ID, "<channelId>");
-  assert.equal(approvalChannelConfigured(), false);
+test("filing posts both surfaces from the pinned blob and the approval channel is configured", async () => {
+  assert.equal(APPROVAL_CHANNEL_ID, "C0CLPUMNYUD");
+  assert.equal(approvalChannelConfigured(), true);
   const blocked = approvalGithub();
   const refused = await fileApprovalRequest({
     requestId: "iso-req-1",
@@ -787,8 +817,8 @@ test("filing posts both surfaces from the pinned blob and the placeholder channe
     slack: slackDouble(),
     env: ENV,
   });
-  assert.equal(refused.reason, "approval channel is not configured");
-  assert.equal(blocked.client.calls.length, 0);
+  assert.equal(refused.reason, "request not found");
+  assert.equal(refused.posted, false);
 
   const github = approvalGithub();
   const request = validateRequest(requestDocument());
@@ -867,6 +897,7 @@ test("mentions parse only as a filing command and the slack hook stays ahead of 
   assert.equal(parseApprovalRequestMention("@ISO Workflows approval-request iso-req-1"), "iso-req-1");
   assert.equal(parseApprovalRequestMention("please approve iso-req-1"), null);
   assert.equal(parseApprovalRequestMention("I approve this merge"), null);
+  testClock.env = ENV;
   const github = approvalGithub();
   let builds = 0;
   const handlers = createApprovalHandlers({
@@ -874,7 +905,6 @@ test("mentions parse only as a filing command and the slack hook stays ahead of 
       builds += 1;
       return github.client;
     },
-    env: () => ENV,
   });
   const slack = slackDouble();
   assert.equal(await handlers.onMessage({ text: "hello", channelId: THREAD }, { slack }), false);
@@ -883,7 +913,7 @@ test("mentions parse only as a filing command and the slack hook stays ahead of 
   assert.equal(builds, 0);
   assert.equal(await handlers.onMessage({ text: `<@${BOT}> approval-request iso-req-1`, channelId: THREAD, threadTs: THREAD_PARENT, ts: THREAD_PARENT }, { slack }), true);
   assert.equal(builds, 1);
-  assert.equal(github.client.calls.length, 0);
+  assert.equal([...github.state.files.keys()].some((key) => key.includes(":approvals/records/")), false);
 
   const slackSource = await readFile(new URL("agents/specification/agent/channels/slack.ts", root), "utf8");
   const interaction = slackSource.slice(slackSource.indexOf("onInteraction:"));
@@ -932,6 +962,14 @@ test("only the ISO Workflows bot authors a card", async () => {
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }), null);
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID }), null);
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP }), BOT_USER_ID);
+  const savedSlack = testPins.slackAppId;
+  testPins.slackAppId = "<PH:slack-app-id>";
+  try {
+    assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "<PH:slack-app-id>" }), null);
+    assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: SLACK_APP }), null);
+  } finally {
+    testPins.slackAppId = savedSlack;
+  }
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0OTHER" }), null);
   assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), null);
   assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }), null);
@@ -1621,8 +1659,10 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
     }
   }
   const canonicalText = canonical.toString("utf8");
-  assert.equal(canonicalText.includes("<channelId>"), true);
-  assert.equal(canonicalText.includes("<approvalRowUrl>"), true);
-  assert.equal(sha256Hex(canonical), "610ee66190539091fac5fa830e1c997ff3e389f320786491697f8e2994b1aff2");
+  assert.equal(canonicalText.includes("<channelId>"), false);
+  assert.equal(canonicalText.includes("<approvalRowUrl>"), false);
+  assert.equal(canonicalText.includes("C0CLPUMNYUD"), true);
+  assert.equal(canonicalText.includes("https://app.notion.com/p/4239a2439a1d8128989dd9b2c0e5faa2"), true);
+  assert.equal(sha256Hex(canonical), "7c5f4fad80694f4d8fb96f3752d65c2025e7fa883152df823eb11b56e4d48c28");
   assert.equal(sha256Hex(personas), "060bb4b89c4b38d6062055a35a6456fbae6d271a70919b0a568260ea7f1ccb48");
 });

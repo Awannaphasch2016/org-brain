@@ -87,7 +87,7 @@ export function claimExecution(
     identity: { kind: string; botLogin: string; label?: string } | null;
     request(method: string, apiPath: string, init?: { body?: unknown; allowNotFound?: boolean }): Promise<any>;
   },
-  input: { requestId: string; key: string; executorId: string; now?: Date | number | string },
+  input: { requestId: string; key: string; executorId: string },
 ): Promise<Record<string, unknown>>;
 
 type ApprovalClient = {
@@ -106,12 +106,9 @@ export function handleApprovalClick(input: {
   actionId?: string;
   value?: string;
   userId?: string;
-  isBot?: boolean;
   channelId?: string;
   messageTs?: string;
   threadTs?: string;
-  env?: NodeJS.ProcessEnv;
-  now?: Date | number | string;
   client: ApprovalClient;
   slack?: ApprovalSlack;
 }): Promise<Record<string, unknown>>;
@@ -123,7 +120,6 @@ export function deliverApprovalRequest(input: {
   threadTs: string;
   client: ApprovalClient;
   slack?: ApprovalSlack;
-  env?: NodeJS.ProcessEnv;
 }): Promise<Record<string, unknown>>;
 
 export function fileApprovalRequest(input: {
@@ -132,13 +128,10 @@ export function fileApprovalRequest(input: {
   threadTs: string;
   client: ApprovalClient;
   slack?: ApprovalSlack;
-  env?: NodeJS.ProcessEnv;
 }): Promise<Record<string, unknown>>;
 
 export function createApprovalHandlers(input?: {
   createClient: () => Promise<ApprovalClient>;
-  env?: () => NodeJS.ProcessEnv;
-  now?: () => Date;
 }): {
   onInteraction(
     action: { actionId: string; value?: string; messageTs?: string; user?: { id?: string } },
