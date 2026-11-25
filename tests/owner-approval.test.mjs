@@ -136,7 +136,7 @@ function approvalGithub(identity) {
         sha: "c".repeat(40),
         author: { login, id: 1 },
         committer: { login: committer, id: 1 },
-        verification: { verified },
+        commit: { verification: { verified, reason: verified ? "valid" : "unsigned" } },
       }]);
     }
     if (method === "GET" && pathname.endsWith("/rulesets")) {
@@ -933,19 +933,19 @@ test("a planted record is not a decision, and a real click replaces it", async (
   const action = { ...planted.request.actions[0], requestId: planted.request.requestId };
   storeText(planted.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(forged(action, planted.refs)), "anak");
   const rejected = await handleApprovalClick(click(planted, buttonById(planted.request, "iso-approval:reject")));
-  assert.equal(rejected.status, "recorded");
-  assert.equal(rejected.record.decision, "reject");
+  assert.equal(rejected.recorded, false);
+  assert.equal(rejected.reason, "RECORD_MISMATCH");
   const updates = planted.slack.calls.filter((call) => call.method === "chat.update");
   assert.equal(updates.length, 2);
-  assert.equal(updates.every((call) => call.body.blocks[0].text.text.startsWith("REJECTED by <@U0CFRUV378D>")), true);
-  assert.equal(updates.some((call) => call.body.channel === "C0ATTACKER"), false);
+  assert.equal(updates.every((call) => call.body.text.startsWith("HELD: record mismatch")), true);
+  assert.equal(JSON.parse(planted.github.state.files.get(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`)).decision, "approve");
   assert.equal(verifyApproval({ action, record: forged(action, planted.refs), card: { blocks: updates[0].body.blocks } }).ok, false);
 
   const refresh = seedReady();
   storeText(refresh.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(forged(action, refresh.refs)), "anak");
   const refreshed = await handleApprovalClick(click(refresh, buttonById(refresh.request, "iso-approval:refresh")));
   assert.equal(refreshed.reason, "RECORD_MISMATCH");
-  assert.equal(refresh.slack.calls.some((call) => call.method === "chat.update"), false);
+  assert.equal(refresh.slack.calls.filter((call) => call.method === "chat.update").every((call) => call.body.text.startsWith("HELD: record mismatch")), true);
 
   const tampered = seedReady();
   storeText(tampered.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify({
@@ -954,20 +954,15 @@ test("a planted record is not a decision, and a real click replaces it", async (
     decidedAt: "x",
   }));
   const approved = await handleApprovalClick(click(tampered, approveButton(tampered.request)));
-  assert.equal(approved.status, "recorded");
-  assert.equal(approved.record.actionHash, action.actionHash);
+  assert.equal(approved.recorded, false);
+  assert.equal(approved.reason, "RECORD_MISMATCH");
   const shown = tampered.slack.calls.find((call) => call.method === "chat.update").body.text;
-  assert.equal(shown.includes(action.actionHash), true);
+  assert.equal(shown.startsWith("HELD: record mismatch"), true);
   assert.equal(shown.includes("0".repeat(64)), false);
-  assert.equal((await verifyApproval({
-    client: tampered.github.client,
-    action,
-    card: { blocks: tampered.slack.calls.find((call) => call.method === "chat.update").body.blocks },
-  })).ok, true);
+  assert.equal(recordPuts(tampered.github.client).length, 0);
 
   const blocked = seedReady();
   blocked.github.state.commitsStatus = 500;
-  blocked.github.state.rejectSha = true;
   storeText(blocked.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(forged(action, blocked.refs)), "anak");
   const held = await handleApprovalClick(click(blocked, buttonById(blocked.request, "iso-approval:reject")));
   assert.equal(held.reason, "RECORD_PROVENANCE_FAIL");
@@ -987,8 +982,8 @@ test("a planted record is not a decision, and a real click replaces it", async (
   assert.equal(first.recorded, true);
   relayed.github.state.authors.set(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`, "iso-workflows[bot]");
   const second = await handleApprovalClick(click(relayed, approveButton(relayed.request), { channelId: THREAD, messageTs: THREAD_CARD_TS, threadTs: THREAD_PARENT }));
-  assert.equal(second.status, "recorded");
-  assert.equal(second.record.decision, "approve");
+  assert.equal(second.reason, "RECORD_MISMATCH");
+  assert.equal(second.recorded, false);
 });
 
 test("a thread parent returned first does not hide the card", async () => {
