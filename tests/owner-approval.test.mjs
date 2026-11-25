@@ -23,6 +23,7 @@ import {
   decidedBlockId,
   BOOTSTRAP_PACKET_EXPIRES_AT,
   bootstrapCardExpiresAt,
+  bootstrapCardExpiryAllowed,
   bootstrapStatement,
   bootstrapTitle,
   deliverApprovalRequest,
@@ -37,12 +38,13 @@ import {
   runDeclarationSha256,
   sha256Hex,
   shaReachableFromMain,
-  useAppPinsForTests,
   validateRequest,
   verifyApproval,
   appCommitListOk,
 } from "../lib/owner-approval.mjs";
 
+const useAppPinsForTests = globalThis[Symbol.for("org-brain.useAppPinsForTests")];
+if (typeof useAppPinsForTests !== "function") throw new Error("test pin hook missing");
 useAppPinsForTests({ appId: 1, botLogin: "iso-workflows[bot]", botUserId: 1 });
 
 const root = new URL("..", import.meta.url);
@@ -96,6 +98,7 @@ function approvalGithub(identity) {
   const state = {
     files: new Map(),
     blobs: new Map(),
+    history: new Map(),
     putQueue: [],
     authors: new Map(),
     rulesets: filledRulesetTemplates(1).map((template, index) => ({ ...template, id: index + 1, current_user_can_bypass: "never" })),
@@ -115,6 +118,16 @@ function approvalGithub(identity) {
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
       const key = `${body.branch}:${filePath}`;
       const text = Buffer.from(body.content, "base64").toString("utf8");
+      const remember = (login) => {
+        const history = state.history.get(key) ?? [];
+        history.unshift({
+          sha: sha1(`${history.length}:${text}`),
+          author: { login, id: 1 },
+          committer: { login, id: 1 },
+          commit: { verification: { verified: true, reason: "valid" } },
+        });
+        state.history.set(key, history);
+      };
       if (body?.sha !== undefined) {
         if (state.rejectSha) return http({ message: "sha was supplied" }, 422);
         const current = state.files.get(key);
@@ -123,16 +136,27 @@ function approvalGithub(identity) {
         state.files.set(key, text);
         state.authors.set(key, resolved.botLogin);
         state.blobs.set(sha1(text), text);
+        remember(resolved.botLogin);
         return http({ content: { sha: sha1(text) } }, 200);
       }
       if (state.files.has(key)) return http({ message: '"sha" wasn\'t supplied.' }, 422);
       state.files.set(key, text);
       state.authors.set(key, resolved.botLogin);
+      remember(resolved.botLogin);
       return http({ content: { sha: "d".repeat(40) } }, 201);
     }
     if (method === "GET" && pathname.endsWith("/commits")) {
       if (state.commitsStatus) return http({ message: "commits unavailable" }, state.commitsStatus);
       const key = `${parsed.searchParams.get("sha")}:${parsed.searchParams.get("path")}`;
+      const perPage = Number(parsed.searchParams.get("per_page") ?? "1");
+      const limit = Number.isInteger(perPage) && perPage > 0 ? perPage : 1;
+      if (state.history.has(key)) {
+        let commits = state.history.get(key).slice(0, limit).map((commit) => ({ ...commit, author: { ...commit.author }, committer: { ...commit.committer }, commit: { verification: { ...commit.commit.verification } } }));
+        if (commits.length > 0 && state.authors.has(key)) commits[0].author.login = state.authors.get(key);
+        if (commits.length > 0 && state.committers?.has(key)) commits[0].committer.login = state.committers.get(key);
+        if (commits.length > 0 && state.unverified?.has(key)) commits[0].commit.verification = { verified: false, reason: "unsigned" };
+        return http(commits);
+      }
       const login = state.files.has(key) ? state.authors.get(key) : undefined;
       if (!login) return http([]);
       const committer = state.committers?.get(key) ?? login;
@@ -142,7 +166,7 @@ function approvalGithub(identity) {
         author: { login, id: 1 },
         committer: { login: committer, id: 1 },
         commit: { verification: { verified, reason: verified ? "valid" : "unsigned" } },
-      }]);
+      }].slice(0, limit));
     }
     if (method === "GET" && pathname.endsWith("/rulesets")) {
       return http(state.rulesets ?? []);
@@ -206,7 +230,7 @@ function slackDouble({ users } = {}) {
       }
       if (method === "chat.postMessage") {
         const ts = body.ts ?? `${1700000000 + messages.length}.000100`;
-        messages.push({ channel: body.channel, ts, threadTs: body.thread_ts ?? ts, user: BOT });
+        messages.push({ channel: body.channel, ts, threadTs: body.thread_ts ?? ts, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
         return { ok: true, ts, channel: body.channel, message: { user: BOT, ts, bot_id: ISO_WORKFLOWS_BOT_ID } };
       }
       if (method === "chat.update") {
@@ -228,6 +252,7 @@ function slackDouble({ users } = {}) {
             ts: item.ts,
             ...(item.user ? { user: item.user } : {}),
             ...(item.bot_id ? { bot_id: item.bot_id } : {}),
+            ...(item.app_id ? { app_id: item.app_id } : {}),
             ...(item.blocks ? { blocks: item.blocks } : {}),
           })),
         };
@@ -692,6 +717,22 @@ test("connector mode, a missing signing secret, and a non-app identity record no
     assert.equal(recordPuts(setup.github.client).length, 0);
     assertNoMergeOrDeploy(setup.github.client);
   }
+
+  const previousPins = useAppPinsForTests({
+    appId: 1,
+    botLogin: "<PH:github-app-bot-login>",
+    botUserId: "<PH:github-app-bot-user-id>",
+  });
+  try {
+    const partial = seedReady();
+    partial.github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
+    const refused = await handleApprovalClick(click(partial, approveButton(partial.request)));
+    assert.equal(refused.reason, "personal-token identity");
+    assert.equal(refused.recorded, false);
+    assert.equal(recordPuts(partial.github.client).length, 0);
+  } finally {
+    useAppPinsForTests(previousPins);
+  }
 });
 
 test("filing posts both surfaces from the pinned blob and the placeholder channel refuses", async () => {
@@ -824,6 +865,8 @@ test("a pending statement is plain text and a decided card has a fixed block id"
 test("only the ISO Workflows bot authors a card", async () => {
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }), null);
   assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID }), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0TEST" }), null);
   assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), null);
   assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }), null);
   assert.equal(authorFromSlackMessage({}), null);
@@ -832,6 +875,8 @@ test("only the ISO Workflows bot authors a card", async () => {
     { bot_id: "BOTHERAPP" },
     {},
     { user: "U0OTHER" },
+    { user: BOT },
+    { user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID, app_id: "A0TEST" },
   ]) {
     const setup = seedReady();
     setup.slack.messages.length = 0;
@@ -862,8 +907,8 @@ test("a long thread still finds the card, and a conflict can be retried", async 
       user: "U0OTHER",
     });
   }
-  setup.slack.messages.push({ channel: CENTRAL, ts: CENTRAL_TS, threadTs: CENTRAL_TS, user: BOT });
-  setup.slack.messages.push({ channel: THREAD, ts: THREAD_CARD_TS, threadTs: THREAD_PARENT, user: BOT });
+  setup.slack.messages.push({ channel: CENTRAL, ts: CENTRAL_TS, threadTs: CENTRAL_TS, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
+  setup.slack.messages.push({ channel: THREAD, ts: THREAD_CARD_TS, threadTs: THREAD_PARENT, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
   const recorded = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(recorded.recorded, true);
 
@@ -916,6 +961,9 @@ test("an execution marker is create-only and verifyApproval checks the decided c
   const clicked = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(clicked.recorded, true);
   assert.equal(clicked.record.cardAttestation.bot_id, ISO_WORKFLOWS_BOT_ID);
+  assert.equal(clicked.record.cardAttestation.app_id, null);
+  assert.equal(clicked.record.cardAttestation.blockHash, undefined);
+  assert.equal(clicked.record.cardAttestation.blocksSha256, sha256Hex(jcs(renderDecidedCard(clicked.record).blocks)));
   const verified = { ...setup.request.actions[0], requestId: setup.request.requestId };
   assert.equal((await verifyApproval({ client: setup.github.client, action: verified })).ok, true);
   const stored = setup.github.state.files.get(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`);
@@ -1026,7 +1074,7 @@ test("a thread parent returned first does not hide the card", async () => {
     const parent = { ts: body.ts, user: APPROVER };
     const replies = setup.slack.messages
       .filter((item) => item.channel === body.channel && item.ts !== body.ts && item.ts >= body.oldest && item.ts <= body.latest)
-      .map((item) => ({ ts: item.ts, user: item.user }));
+      .map((item) => ({ ts: item.ts, user: item.user, ...(item.bot_id ? { bot_id: item.bot_id } : {}) }));
     return { ok: true, messages: [parent, ...replies].slice(0, body.limit ?? 1000) };
   };
   const result = await handleApprovalClick(click(setup, approveButton(setup.request), {
@@ -1095,6 +1143,103 @@ test("a bootstrap card files one lock and an expired click writes no record", as
   assert.equal(late.slack.calls.some((call) => call.method === "chat.update" && call.body.text === "EXPIRED: no decision recorded"), true);
 });
 
+test("a bootstrap expiry shorter than 72h can be filed, and one supersede stays pinned", async () => {
+  const shorter = formatIct(new Date(NOW.getTime() + 60 * 60 * 1000));
+  assert.equal(shorter === bootstrapCardExpiresAt(NOW), false);
+  assert.equal(bootstrapCardExpiryAllowed(NOW, shorter), true);
+  assert.equal(bootstrapCardExpiryAllowed(NOW, formatIct(NOW)), false);
+  assert.equal(bootstrapCardExpiryAllowed(NOW, bootstrapCardExpiresAt(NOW)), true);
+  assert.equal(bootstrapCardExpiryAllowed(NOW, formatIct(new Date(NOW.getTime() + 73 * 60 * 60 * 1000))), false);
+
+  function bootstrapRequest(requestId, cardExpiresAt) {
+    const target = {
+      packetId: "isobp-20261125-01",
+      packetHash: PACKET_HASH,
+      mergeSha40: HEAD,
+      deploymentId: "dpl_1",
+      packetExpiresAt: BOOTSTRAP_PACKET_EXPIRES_AT,
+      cardExpiresAt,
+    };
+    return validateRequest(requestDocument({
+      key: "bootstrap",
+      kind: "bootstrap-reconfirm",
+      title: bootstrapTitle(),
+      statement: bootstrapStatement(target),
+      target,
+    }, requestId));
+  }
+
+  async function fileBootstrap(github, slack, request, now) {
+    storeText(github, REQUESTS_BRANCH, `approvals/requests/${request.requestId}.json`, `${JSON.stringify(request)}\n`);
+    return deliverApprovalRequest({
+      requestId: request.requestId,
+      channelId: CENTRAL,
+      threadChannel: THREAD,
+      threadTs: THREAD_PARENT,
+      client: github.client,
+      slack,
+      env: ENV,
+      now,
+    });
+  }
+
+  const sameInstant = approvalGithub();
+  const refusedSame = await fileBootstrap(sameInstant, slackDouble(), bootstrapRequest("isobr-same", formatIct(NOW)), NOW);
+  assert.equal(refusedSame.reason, "bootstrap card expiry does not match");
+  const refusedLong = await fileBootstrap(
+    approvalGithub(),
+    slackDouble(),
+    bootstrapRequest("isobr-long", formatIct(new Date(NOW.getTime() + 73 * 60 * 60 * 1000))),
+    NOW,
+  );
+  assert.equal(refusedLong.reason, "bootstrap card expiry does not match");
+
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const firstRequest = bootstrapRequest("isobr-20261125-01", shorter);
+  const first = await fileBootstrap(github, slack, firstRequest, NOW);
+  assert.equal(first.status, "filed");
+  const late = new Date(NOW.getTime() + 2 * 60 * 60 * 1000);
+  const secondRequest = bootstrapRequest("isobr-20261125-02", formatIct(new Date(late.getTime() + 60 * 60 * 1000)));
+  const second = await fileBootstrap(github, slack, secondRequest, late);
+  assert.equal(second.status, "filed");
+  const lockKey = `${RECORDS_BRANCH}:approvals/bootstrap/${PACKET_HASH}.json`;
+  const lock = JSON.parse(github.state.files.get(lockKey));
+  assert.equal(lock.requestId, "isobr-20261125-02");
+  assert.equal(lock.supersedes, "isobr-20261125-01");
+  assert.equal(github.state.history.get(lockKey).length, 2);
+  const third = await fileBootstrap(
+    github,
+    slack,
+    bootstrapRequest("isobr-20261125-03", formatIct(new Date(late.getTime() + 3 * 60 * 60 * 1000))),
+    new Date(late.getTime() + 60 * 60 * 1000),
+  );
+  assert.equal(third.reason, "bootstrap card cannot be filed again");
+  assert.equal(github.state.history.get(lockKey).length, 2);
+
+  const pending = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/isobr-20261125-02.json`));
+  const central = pending.actions.bootstrap.cardRefs.find((ref) => ref.surface === "central");
+  const button = renderApprovalCard({ ...secondRequest.actions[0], requestId: secondRequest.requestId }).blocks
+    .find((block) => block.type === "actions").elements[0];
+  const recorded = await handleApprovalClick(click(
+    { github, slack, request: secondRequest },
+    button,
+    { channelId: central.channel, messageTs: central.ts, threadTs: central.threadTs, now: late },
+  ));
+  assert.equal(recorded.recorded, true);
+  github.client.identity = { kind: "personal-token", botLogin: "anak" };
+  const action = { ...secondRequest.actions[0], requestId: secondRequest.requestId };
+  assert.equal((await verifyApproval({ client: github.client, action })).ok, true);
+  github.state.history.get(lockKey).push({
+    sha: "e".repeat(40),
+    author: { login: "anak", id: 9 },
+    committer: { login: "anak", id: 9 },
+    commit: { verification: { verified: true } },
+  });
+  github.client.identity = { kind: "github-app", botLogin: "iso-workflows[bot]" };
+  assert.equal((await verifyApproval({ client: github.client, action })).reason, "RECORD_PROVENANCE_FAIL");
+});
+
 test("a personal token claims a marker and can verify an App-written record", async () => {
   const personal = approvalGithub({ kind: "personal-token", botLogin: "anak", label: "personal-token (anak)" });
   const first = await claimExecution(personal.client, { requestId: "iso-req-pt", key: "merge", executorId: "coding-agent", now: NOW });
@@ -1102,6 +1247,13 @@ test("a personal token claims a marker and can verify an App-written record", as
   assert.equal(first.status, "claimed");
   assert.equal(first.execution.committerLogin, "anak");
   assert.equal(second.status, "already-claimed");
+  const nameless = approvalGithub({ kind: "personal-token", botLogin: null, label: "personal-token" });
+  const nullLogin = await claimExecution(nameless.client, { requestId: "iso-req-null", key: "merge", executorId: "coding-agent", now: NOW });
+  const nullAgain = await claimExecution(nameless.client, { requestId: "iso-req-null", key: "merge", executorId: "coding-agent", now: NOW });
+  assert.equal(nullLogin.status, "claimed");
+  assert.equal(nullLogin.execution.committerLogin, null);
+  assert.equal(nullAgain.status, "already-claimed");
+  assert.equal(nullAgain.status, second.status);
   const setup = seedReady();
   const clicked = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(clicked.recorded, true);
@@ -1114,6 +1266,8 @@ test("compare accepts an ancestor of main and a second commit is not app provena
   const source = await readFile(new URL("lib/owner-approval.mjs", root), "utf8");
   assert.equal(source.includes("VERCEL_TOKEN"), false);
   assert.equal(source.includes("api.vercel.com"), false);
+  assert.equal(source.includes("export function useAppPinsForTests"), false);
+  assert.equal(source.includes("export { useAppPinsForTests"), false);
   for (const status of ["behind", "identical"]) {
     assert.equal(await shaReachableFromMain({ request: async () => ({ status }) }, "c".repeat(40)), true);
   }
@@ -1206,6 +1360,6 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
   const canonicalText = canonical.toString("utf8");
   assert.equal(canonicalText.includes("<channelId>"), true);
   assert.equal(canonicalText.includes("<approvalRowUrl>"), true);
-  assert.equal(sha256Hex(canonical), "25a3d9ded7fad310bf6da586b26d7e3e65c22903bee0319b000bda5bceaea1e2");
-  assert.equal(sha256Hex(personas), "1ac9117af2196f816137eccbef3e42127cc8b35e7a64df946c86ee02153747cc");
+  assert.equal(sha256Hex(canonical), "85cde416308f92301dd0cfadb4f8f44c3e7aa59ef11e17415ef9f6fa9d91706a");
+  assert.equal(sha256Hex(personas), "060bb4b89c4b38d6062055a35a6456fbae6d271a70919b0a568260ea7f1ccb48");
 });

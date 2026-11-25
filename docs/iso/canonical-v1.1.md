@@ -31,7 +31,7 @@ Merge to main · deploy or production change · secrets, infra or env change · 
 
 Before any Yes-Needed action, the acting agent needs all of these:
 1. an app-written record (commit author is the authenticated GitHub App's own `[bot]` login) whose `actionHash` equals the hash the agent recomputes itself from the exact action it is about to take, with `decision` = `approve`;
-2. a bot-authored (`U0CG2QNQRLM`) card on either surface whose block id is `iso-approval-decided:<actionHash>`, with no actions block, showing APPROVED, and with the same `requestId` and hash;
+2. the approval pinned to `blocksSha256`, the SHA-256 of the decided card blocks as the App recorded them at the signed click, inside that App-committed, create-only record. `verifyApproval` checks that attestation, not live Slack, so a later edit to the Slack message does not change what was approved and is not seen by verification. The attestation names bot user `U0CG2QNQRLM` and the same `requestId` and hash;
 3. the recorded clicker is exactly `U0CFRUV378D`.
 Then it acts once: it first writes a create-only marker at `approvals/executions/<requestId>/<key>.json` on `iso-approval-executions`, and if that file already exists it does not act. Any identity with contents write may add that marker. It logs the record commit SHA and the card ts in the Compliance Log. The shared check is `verifyApproval`. If any check fails, it doesn't act and files a gap.
 
@@ -39,7 +39,7 @@ Then it acts once: it first writes a create-only marker at `approvals/executions
 
 - `merge-deploy`: one approval to merge one PR at a recorded head SHA and let the production deploy it triggers run. Target: repo `Awannaphasch2016/org-brain`, PR, head SHA, base SHA, method `merge`, Vercel team `team_HH56QrlGNZZs3DWHlokF5NlZ`, Vercel project `prj_D4lCsHuXRH1ZLAXvliq5BkCDHwbm`, target `production`. A click only records the decision. The executor, after `verifyApproval` and a create-only execution marker, merges with `sha` equal to the head SHA and `merge_method` `merge`, then checks the merge parents are `[baseSha40, headSha40]` and that a production deployment for that merge SHA is `READY` within 30 minutes. On a mismatch it takes no corrective action, marks the marker `result: mismatch`, and files a gap.
 - `deploy`: a redeploy with no merge. Target adds `gitSha40`, which must be reachable from `main`.
-- `rollback`: a rollback with no merge. Target adds `deploymentId` and `gitSha40`. The executor checks `gitSha40` against that deployment's `meta.githubCommitSha`. The approval app does not call Vercel when it files or records the click.
+- `rollback`: a rollback with no merge. Target adds `deploymentId` and `gitSha40`. Before filing, the executor checks that deployment's `meta.githubCommitSha` equals `gitSha40` and refuses to file on a mismatch. The approval app does not call Vercel when it files or records the click.
 - `scope-page-edit`: a change to this page. Target: page, from version, to version, text path, text SHA-256, head SHA.
 - `decision`: a choice between named options; the first option clicked binds and the others become void.
 - `experiment-run`: starting one declared experiment run. Target: the Experiment Registry row URL, its `contentSha256`, and the Verifier note URL. The app shows all three and does not recompute the hash. The Verifier recomputes it before the card is filed, and the executor recomputes it again at run start.
