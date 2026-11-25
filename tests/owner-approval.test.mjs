@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { gateApproverIds } from "../lib/gate-actions.mjs";
+import { RULESET_TEMPLATES } from "../lib/ruleset-spec.mjs";
 import { GithubClient } from "../lib/github.mjs";
 import {
   APPROVAL_CHANNEL_ID,
@@ -20,6 +21,10 @@ import {
   claimExecution,
   createApprovalHandlers,
   decidedBlockId,
+  BOOTSTRAP_PACKET_EXPIRES_AT,
+  bootstrapCardExpiresAt,
+  bootstrapStatement,
+  bootstrapTitle,
   deliverApprovalRequest,
   fileApprovalRequest,
   formatIct,
@@ -83,7 +88,13 @@ function sha1(text) {
 
 function approvalGithub(identity) {
   const resolved = identity ?? { kind: "github-app", botLogin: "iso-workflows[bot]", label: "github-app (iso-workflows[bot])" };
-  const state = { files: new Map(), blobs: new Map(), putQueue: [], authors: new Map() };
+  const state = {
+    files: new Map(),
+    blobs: new Map(),
+    putQueue: [],
+    authors: new Map(),
+    rulesets: RULESET_TEMPLATES.map((template) => ({ ...template, id: 9, current_user_can_bypass: "never" })),
+  };
   const fetchImpl = async (url, init = {}) => {
     const method = String(init.method ?? "GET").toUpperCase();
     const parsed = new URL(url);
@@ -120,12 +131,27 @@ function approvalGithub(identity) {
       const login = state.files.has(key) ? state.authors.get(key) : undefined;
       if (!login) return http([]);
       const committer = state.committers?.get(key) ?? login;
-      return http([{ sha: "c".repeat(40), author: { login }, committer: { login: committer } }]);
+      const verified = state.unverified?.has(key) ? false : true;
+      return http([{
+        sha: "c".repeat(40),
+        author: { login, id: 1 },
+        committer: { login: committer, id: 1 },
+        verification: { verified },
+      }]);
+    }
+    if (method === "GET" && pathname.endsWith("/rulesets")) {
+      return http(state.rulesets ?? []);
     }
     if (method === "GET" && pathname.includes("/contents/")) {
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
-      const text = state.files.get(`${parsed.searchParams.get("ref")}:${filePath}`);
-      if (text == null) return http({ message: "Not Found" }, 404);
+      const ref = parsed.searchParams.get("ref");
+      const text = state.files.get(`${ref}:${filePath}`);
+      if (text == null) {
+        const prefix = `${ref}:${filePath.replace(/\/$/, "")}/`;
+        const children = [...state.files.keys()].filter((key) => key.startsWith(prefix));
+        if (children.length === 0) return http({ message: "Not Found" }, 404);
+        return http(children.map((key) => ({ type: "file", path: key.slice(`${ref}:`.length), sha: sha1(state.files.get(key)) })));
+      }
       const blob = sha1(text);
       state.blobs.set(blob, text);
       return http({ encoding: "base64", content: Buffer.from(text).toString("base64"), sha: blob, type: "file" });
@@ -169,7 +195,7 @@ function slackDouble({ users } = {}) {
       if (method === "chat.postMessage") {
         const ts = body.ts ?? `${1700000000 + messages.length}.000100`;
         messages.push({ channel: body.channel, ts, threadTs: body.thread_ts ?? ts, user: BOT });
-        return { ok: true, ts, channel: body.channel, message: { user: BOT, ts, bot_id: "B0ISO" } };
+        return { ok: true, ts, channel: body.channel, message: { user: BOT, ts, bot_id: ISO_WORKFLOWS_BOT_ID } };
       }
       if (method === "chat.update") return { ok: true, ts: body.ts };
       if (method === "chat.postEphemeral") return { ok: true };
@@ -374,19 +400,32 @@ test("approval kinds bind a hash and reject Approve all", () => {
     statement: "Choose.",
     target: { options: ["approve", "Hold"] },
   }, "iso-req-9")), /decision target/);
-  validateRequest(requestDocument({
+  assert.throws(() => validateRequest(requestDocument({
     key: "deploy",
     kind: "deploy",
     title: "Redeploy",
     statement: "Redeploy production.",
     target: { vercelTeam: "team", vercelProject: "prj", target: "production" },
+  }, "iso-req-3")), /deploy target/);
+  validateRequest(requestDocument({
+    key: "deploy",
+    kind: "deploy",
+    title: "Redeploy",
+    statement: "Redeploy production.",
+    target: { vercelTeam: "team_HH56QrlGNZZs3DWHlokF5NlZ", vercelProject: "prj_D4lCsHuXRH1ZLAXvliq5BkCDHwbm", target: "production", gitSha40: HEAD },
   }, "iso-req-3"));
   validateRequest(requestDocument({
     key: "rollback",
     kind: "rollback",
     title: "Roll back",
     statement: "Roll back production.",
-    target: { vercelTeam: "team", vercelProject: "prj", target: "production", deploymentId: "dpl_1" },
+    target: {
+      vercelTeam: "team_HH56QrlGNZZs3DWHlokF5NlZ",
+      vercelProject: "prj_D4lCsHuXRH1ZLAXvliq5BkCDHwbm",
+      target: "production",
+      deploymentId: "dpl_1",
+      gitSha40: HEAD,
+    },
   }, "iso-req-4"));
   validateRequest(requestDocument({
     key: "page",
@@ -400,21 +439,29 @@ test("approval kinds bind a hash and reject Approve all", () => {
     kind: "experiment-run",
     title: "Start ISO-RUN-1",
     statement: "Start the run.",
-    target: { rowUrl: "https://app.notion.com/p/iso-run-1", contentSha256: RUN_HASH },
+    target: { rowUrl: "https://app.notion.com/p/iso-run-1", contentSha256: RUN_HASH, verifierNoteUrl: "https://app.notion.com/p/iso-run-1-note" },
   }, "iso-req-6"));
+  const bootstrapTarget = {
+    packetId: "isobp-20261125-01",
+    packetHash: PACKET_HASH,
+    mergeSha40: HEAD,
+    deploymentId: "dpl_1",
+    packetExpiresAt: "2026-12-09T23:59:59+07:00",
+    cardExpiresAt: "2026-11-28T14:00:00.000+07:00",
+  };
   validateRequest(requestDocument({
     key: "bootstrap",
     kind: "bootstrap-reconfirm",
     title: "Re-confirm Bootstrap Packet isobp-20261125-01",
-    statement: "Re-confirm the packet.",
-    target: { packetHash: PACKET_HASH, mergeSha40: HEAD, deploymentId: "dpl_1" },
+    statement: `I re-confirm Bootstrap Packet isobp-20261125-01 with packetHash ${PACKET_HASH}, merged as ${HEAD} and deployed to production as dpl_1. Approving marks the ISO approval route live.`,
+    target: bootstrapTarget,
   }, "iso-req-7"));
   assert.throws(() => validateRequest(requestDocument({
     key: "other",
     kind: "bootstrap-reconfirm",
     title: "Re-confirm",
     statement: "No.",
-    target: { packetHash: PACKET_HASH, mergeSha40: HEAD, deploymentId: "dpl_1" },
+    target: bootstrapTarget,
   }, "iso-req-8")), /bootstrap/);
 });
 
@@ -439,7 +486,7 @@ test("a click records one decision and never merges or deploys", async () => {
   assertNoMergeOrDeploy(setup.github.client);
   const updates = setup.slack.calls.filter((call) => call.method === "chat.update");
   assert.deepEqual(updates.map((call) => call.body.channel).sort(), [CENTRAL, THREAD].sort());
-  assert.equal(updates.every((call) => call.body.text.includes("APPROVED") && call.body.text.includes(ACTION_HASH) && call.body.text.includes(`<@${APPROVER}>`) && call.body.blocks.every((block) => block.type !== "actions")), true);
+  assert.equal(updates.every((call) => call.body.text.includes("APPROVED") && call.body.text.includes(ACTION_HASH) && call.body.text.includes("&lt;@U0CFRUV378D&gt;") && call.body.blocks.every((block) => block.type !== "actions") && call.body.blocks[0].text.text.includes(`<@${APPROVER}>`)), true);
   const replies = setup.slack.calls.filter((call) => call.method === "chat.postMessage");
   assert.equal(replies.length, 2);
   assert.equal(replies.every((call) => call.body.text.includes(ACTION_HASH)), true);
@@ -505,7 +552,7 @@ test("wrong card, foreign author, tampered hash, and replay write nothing", asyn
   assert.equal(second.status, "already-decided");
   assert.equal(second.recorded, false);
   assert.equal(recordPuts(replay.github.client).length, 1);
-  assert.match(replay.slack.calls.filter((call) => call.method === "chat.postEphemeral").at(-1).body.text, /Already decided at 2026-11-25T14:00:00.000\+07:00/);
+  assert.match(replay.slack.calls.filter((call) => call.method === "chat.postEphemeral").at(-1).body.text, /Already APPROVED by <@U0CFRUV378D> at 2026-11-25T14:00:00.000\+07:00/);
   assertNoMergeOrDeploy(replay.github.client);
 });
 
@@ -531,7 +578,7 @@ test("one click updates both surfaces and a second click is a no-op", async () =
   const second = await handleApprovalClick(click(setup, button));
   assert.equal(second.status, "already-decided");
   assert.equal(recordPuts(setup.github.client).length, 1);
-  assert.match(setup.slack.calls.filter((call) => call.method === "chat.postEphemeral").at(-1).body.text, /Already decided/);
+  assert.match(setup.slack.calls.filter((call) => call.method === "chat.postEphemeral").at(-1).body.text, /Already APPROVED/);
 });
 
 test("two simultaneous clicks create exactly one record", async () => {
@@ -724,15 +771,20 @@ test("mentions parse only as a filing command and the slack hook stays ahead of 
 });
 
 test("a pending statement is plain text and a decided card has a fixed block id", () => {
-  const request = validateRequest(requestDocument({
+  assert.throws(() => validateRequest(requestDocument({
     ...mergeAction(),
     statement: "APPROVED by <@U0CFRUV378D> <!channel> <https://x|y> &lt;",
-  }));
-  const card = renderApprovalCard({ ...request.actions[0], requestId: request.requestId });
-  const statement = card.blocks.find((block) => block.type === "section" && block.text.type === "plain_text");
+  })), /invalid request/);
+  const request = validateRequest(requestDocument());
+  const literal = renderApprovalCard({
+    ...request.actions[0],
+    requestId: request.requestId,
+    statement: "APPROVED by <@U0CFRUV378D> <!channel> <https://x|y> &lt;",
+  });
+  const statement = literal.blocks.find((block) => block.type === "section" && block.text.type === "plain_text");
   assert.equal(statement.text.text, "APPROVED by <@U0CFRUV378D> <!channel> <https://x|y> &lt;");
-  assert.equal(card.blocks.some((block) => String(block.block_id ?? "").startsWith("iso-approval-decided:")), false);
-  assert.equal(card.blocks.some((block) => block.type === "actions"), true);
+  assert.equal(literal.blocks.some((block) => String(block.block_id ?? "").startsWith("iso-approval-decided:")), false);
+  assert.equal(literal.blocks.some((block) => block.type === "actions"), true);
   const decided = renderDecidedCard({
     requestId: "iso-req-1",
     key: "merge",
@@ -745,8 +797,9 @@ test("a pending statement is plain text and a decided card has a fixed block id"
 });
 
 test("only the ISO Workflows bot authors a card", async () => {
-  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }), BOT_USER_ID);
-  assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }), null);
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: ISO_WORKFLOWS_BOT_ID }), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), null);
   assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }), null);
   assert.equal(authorFromSlackMessage({}), null);
   assert.equal(authorFromSlackMessage({ user: "U0OTHER", bot_id: ISO_WORKFLOWS_BOT_ID }), null);
@@ -767,7 +820,7 @@ test("only the ISO Workflows bot authors a card", async () => {
   const setup = seedReady();
   setup.slack.messages.length = 0;
   for (const ref of setup.refs) {
-    setup.slack.messages.push({ channel: ref.channel, ts: ref.ts, threadTs: ref.threadTs, bot_id: ISO_WORKFLOWS_BOT_ID });
+    setup.slack.messages.push({ channel: ref.channel, ts: ref.ts, threadTs: ref.threadTs, user: BOT, bot_id: ISO_WORKFLOWS_BOT_ID });
   }
   const recorded = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(recorded.recorded, true);
@@ -806,16 +859,18 @@ test("a long thread still finds the card, and a conflict can be retried", async 
     const missing = seedReady();
     missing.github.state.putQueue.push(status);
     const created = await handleApprovalClick(click(missing, approveButton(missing.request)));
-    assert.equal(created.recorded, true, String(status));
-    assert.equal(missing.github.client.calls.some((call) => call.method === "POST" && call.path.endsWith("/git/refs")), true, String(status));
+    assert.equal(created.reason, "route misconfigured", String(status));
+    assert.equal(created.recorded, false, String(status));
+    assert.equal(missing.github.client.calls.some((call) => call.method === "POST" && call.path.endsWith("/git/refs")), false, String(status));
   }
 });
 
 test("an execution marker is create-only and verifyApproval checks the decided card", async () => {
   const github = approvalGithub();
-  const first = await claimExecution(github.client, { requestId: "iso-req-1", key: "merge", executorId: "bot-father", now: NOW });
+  const first = await claimExecution(github.client, { requestId: "iso-req-exec", key: "merge", executorId: "bot-father", now: NOW });
   assert.equal(first.status, "claimed");
-  const second = await claimExecution(github.client, { requestId: "iso-req-1", key: "merge", executorId: "bot-father", now: NOW });
+  assert.equal([...github.state.files.keys()].some((key) => key.startsWith("iso-approval-executions:")), true);
+  const second = await claimExecution(github.client, { requestId: "iso-req-exec", key: "merge", executorId: "bot-father", now: NOW });
   assert.equal(second.status, "already-claimed");
   assert.equal(second.recorded, false);
   const request = validateRequest(requestDocument());
@@ -847,7 +902,7 @@ test("an execution marker is create-only and verifyApproval checks the decided c
     kind: "experiment-run",
     title: "Start ISO-RUN-1",
     statement: "Start the run.",
-    target: { rowUrl: "https://app.notion.com/p/iso-run-1", contentSha256: RUN_HASH },
+    target: { rowUrl: "https://app.notion.com/p/iso-run-1", contentSha256: RUN_HASH, verifierNoteUrl: "https://app.notion.com/p/iso-run-1-note" },
   }, "iso-req-6")))}\n`);
   const experiment = await deliverApprovalRequest({
     requestId: "iso-req-6",
@@ -858,8 +913,8 @@ test("an execution marker is create-only and verifyApproval checks the decided c
     slack: slackDouble(),
     env: ENV,
   });
-  assert.equal(experiment.reason, "experiment-run hash is not recomputed at card time");
-  assert.equal(experiment.posted, false);
+  assert.equal(experiment.status, "filed");
+  assert.equal(experiment.posted, true);
 });
 
 test("a planted record is not a decision, and a real click replaces it", async () => {
@@ -882,7 +937,7 @@ test("a planted record is not a decision, and a real click replaces it", async (
   assert.equal(rejected.record.decision, "reject");
   const updates = planted.slack.calls.filter((call) => call.method === "chat.update");
   assert.equal(updates.length, 2);
-  assert.equal(updates.every((call) => call.body.text.startsWith("REJECTED by <@U0CFRUV378D>")), true);
+  assert.equal(updates.every((call) => call.body.blocks[0].text.text.startsWith("REJECTED by <@U0CFRUV378D>")), true);
   assert.equal(updates.some((call) => call.body.channel === "C0ATTACKER"), false);
   assert.equal(verifyApproval({ action, record: forged(action, planted.refs), card: { blocks: updates[0].body.blocks } }).ok, false);
 
@@ -955,6 +1010,64 @@ test("a thread parent returned first does not hide the card", async () => {
   assert.equal(result.status, "recorded");
 });
 
+test("a bootstrap card files one lock and an expired click writes no record", async () => {
+  const github = approvalGithub();
+  const cardExpiresAt = bootstrapCardExpiresAt(NOW);
+  const target = {
+    packetId: "isobp-20261125-01",
+    packetHash: PACKET_HASH,
+    mergeSha40: HEAD,
+    deploymentId: "dpl_1",
+    packetExpiresAt: BOOTSTRAP_PACKET_EXPIRES_AT,
+    cardExpiresAt,
+  };
+  const action = {
+    key: "bootstrap",
+    kind: "bootstrap-reconfirm",
+    title: bootstrapTitle(),
+    statement: bootstrapStatement(target),
+    target,
+  };
+  const request = validateRequest(requestDocument(action, "isobr-20261125-01"));
+  storeText(github, REQUESTS_BRANCH, "approvals/requests/isobr-20261125-01.json", `${JSON.stringify(request)}\n`);
+  const slack = slackDouble();
+  const filed = await deliverApprovalRequest({
+    requestId: "isobr-20261125-01",
+    channelId: CENTRAL,
+    threadChannel: THREAD,
+    threadTs: THREAD_PARENT,
+    client: github.client,
+    slack,
+    env: ENV,
+    now: NOW,
+  });
+  assert.equal(filed.status, "filed");
+  assert.equal(github.state.files.has(`${RECORDS_BRANCH}:approvals/bootstrap/${PACKET_HASH}.json`), true);
+  const late = seedReady();
+  const expiredRequest = validateRequest(requestDocument(action, "isobr-20261125-01"));
+  storeText(late.github, REQUESTS_BRANCH, "approvals/requests/isobr-20261125-01.json", `${JSON.stringify(expiredRequest)}\n`);
+  const refs = cardRefs();
+  storeText(late.github, RECORDS_BRANCH, "approvals/pending/isobr-20261125-01.json", JSON.stringify({
+    schema: "iso-approval-pending/1",
+    requestId: "isobr-20261125-01",
+    blobSha: sha1(`${JSON.stringify(expiredRequest)}\n`),
+    actions: { bootstrap: { actionHash: expiredRequest.actions[0].actionHash, kind: "bootstrap-reconfirm", cardRefs: refs } },
+  }));
+  storeText(late.github, RECORDS_BRANCH, `approvals/bootstrap/${PACKET_HASH}.json`, JSON.stringify({
+    packetHash: PACKET_HASH,
+    requestId: "isobr-20261125-01",
+    actionHash: expiredRequest.actions[0].actionHash,
+    filedAt: ICT,
+    cardExpiresAt,
+  }));
+  seedSlack(late.slack, refs);
+  const button = renderApprovalCard({ ...expiredRequest.actions[0], requestId: "isobr-20261125-01" }).blocks.find((block) => block.type === "actions").elements[0];
+  const clicked = await handleApprovalClick(click(late, button, { now: new Date("2026-12-10T00:00:00.000Z") }));
+  assert.equal(clicked.reason, "EXPIRED");
+  assert.equal(clicked.recorded, false);
+  assert.equal(late.slack.calls.some((call) => call.method === "chat.update" && call.body.text === "EXPIRED: no decision recorded"), true);
+});
+
 test("the gate approver pin ignores FACTORY_GATE_APPROVER_IDS", () => {
   assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0CFRUV378D, UEXTRA" }), [APPROVER]);
   assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0OTHER" }), [APPROVER]);
@@ -977,6 +1090,6 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
   const canonicalText = canonical.toString("utf8");
   assert.equal(canonicalText.includes("<channelId>"), true);
   assert.equal(canonicalText.includes("<approvalRowUrl>"), true);
-  assert.equal(sha256Hex(canonical), "22df083f1e6845425265d5ea94fcb2cf2fb80ff674f2a72cb4912f168c1b752f");
+  assert.equal(sha256Hex(canonical), "25a3d9ded7fad310bf6da586b26d7e3e65c22903bee0319b000bda5bceaea1e2");
   assert.equal(sha256Hex(personas), "1ac9117af2196f816137eccbef3e42127cc8b35e7a64df946c86ee02153747cc");
 });
