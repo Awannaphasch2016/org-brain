@@ -1,5 +1,6 @@
 export const APPROVER_SLACK_ID: string;
 export const BOT_USER_ID: string;
+export const ISO_WORKFLOWS_BOT_ID: string;
 export const APPROVAL_CHANNEL_ID: string;
 export const THREAD_SURFACE_CHANNELS: readonly string[];
 export const RECORDS_BRANCH: string;
@@ -55,6 +56,37 @@ export function renderDecidedCard(record: {
   actionHash: string;
 }): { text: string; blocks: readonly Record<string, unknown>[] };
 export function parseApprovalRequestMention(text: string): string | null;
+export function authorFromSlackMessage(message: { user?: string; bot_id?: string } | null | undefined): string | null;
+export function decidedBlockId(hash: string): string;
+export function verifyApproval(input: {
+  action: {
+    requestId: string;
+    key: string;
+    kind: string;
+    title: string;
+    statement: string;
+    target: unknown;
+  };
+  record: {
+    requestId?: string;
+    key?: string;
+    actionHash?: string;
+    decision?: string;
+    decidedBy?: string;
+    clickedCardTs?: string;
+    decidedAt?: string;
+  };
+  card: { blocks?: readonly { type?: string; block_id?: string }[] };
+}): { ok: true; actionHash: string; clickedCardTs: string | null; decidedAt: string | null } | { ok: false; reason: string };
+export function claimExecution(
+  client: {
+    owner: string;
+    repo: string;
+    identity: { kind: string; botLogin: string; label?: string } | null;
+    request(method: string, apiPath: string, init?: { body?: unknown; allowNotFound?: boolean }): Promise<any>;
+  },
+  input: { requestId: string; key: string; executorId: string; now?: Date | number | string },
+): Promise<Record<string, unknown>>;
 
 type ApprovalClient = {
   owner: string;

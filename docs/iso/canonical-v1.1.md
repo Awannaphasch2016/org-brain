@@ -31,9 +31,9 @@ Merge to main · deploy or production change · secrets, infra or env change · 
 
 Before any Yes-Needed action, the acting agent needs all of these:
 1. an app-written record (commit author ending in `[bot]`) whose `actionHash` equals the hash the agent recomputes itself from the exact action it is about to take, with `decision` = `approve`;
-2. a bot-authored (`U0CG2QNQRLM`) card on either surface showing APPROVED, with the same `requestId` and hash;
+2. a bot-authored (`U0CG2QNQRLM`) card on either surface whose block id is `iso-approval-decided:<actionHash>`, with no actions block, showing APPROVED, and with the same `requestId` and hash;
 3. the recorded clicker is exactly `U0CFRUV378D`.
-Then it acts once, and logs the record commit SHA and the card ts in the Compliance Log. If any check fails, it doesn't act and files a gap.
+Then it acts once: it first writes a create-only marker at `approvals/executions/<requestId>/<key>.json` on `iso-approval-records`, and if that file already exists it does not act. It logs the record commit SHA and the card ts in the Compliance Log. If any check fails, it doesn't act and files a gap.
 
 ## Approval kinds
 
@@ -54,7 +54,7 @@ The safe reading from v1 is unchanged. In Anak's words: "test clicks never count
 
 ## Experiment runs
 
-Each run is declared as one row in the Experiment Registry (https://app.notion.com/p/4219a2439a1d811ab1b2d8142982bbdd), titled "ISO-RUN-<n> <short name>", with a "Run declaration" section in the fixed format of approval-route design v2 §6. The declaration is frozen once written; a change is a new row that names the old one in `supersedes:`. ISO Workflow Lead, or its delegate, writes the rows. ISO Workflow Verifier validates each row and computes its `contentSha256`. Starting a run needs an approved `experiment-run` card for that row and hash.
+Each run is declared as one row in the Experiment Registry (https://app.notion.com/p/4219a2439a1d811ab1b2d8142982bbdd), titled "ISO-RUN-<n> <short name>", with a "Run declaration" section in the fixed format of approval-route design v2 §6. The declaration is frozen once written; a change is a new row that names the old one in `supersedes:`. ISO Workflow Lead, or its delegate, writes the rows. ISO Workflow Verifier validates each row and computes its `contentSha256`. A declaration with no "Run declaration" heading is invalid. The approval app does not recompute that hash from Notion, and it refuses to post an `experiment-run` card. Starting a run needs an approved `experiment-run` card for that row and hash.
 
 ## Builder and reviewers of the approval route
 
@@ -62,7 +62,7 @@ Bot Father builds and changes the approval route. Coding Agent and ISO Workflow 
 
 ## Route status and INTERIM RULE
 
-The approval route is live only from the time the changelog of this page records "route live", with the record commit SHA and card ts of Anak's Approve on the re-confirmation card. Until then the INTERIM RULE applies: Coding Agent is BLOCKED on every Yes-Needed action (merge, deploy, production, secrets, external sends, spending and deletes). There's no ✅-reaction fallback. Approvals in chat, on a PR or by relay never count. The #56–#68 merge stays held.
+The approval route is live only from the time the changelog of this page records "route live", with the record commit SHA and card ts of Anak's Approve on the re-confirmation card. Until then the INTERIM RULE applies: Coding Agent is BLOCKED on every Yes-Needed action (merge, deploy, production, secrets, external sends, spending and deletes). There's no ✅-reaction fallback. Approvals in chat, on a PR or by relay never count. The #56–#68 merge was merged on 2026-11-23 outside this route.
 
 ## One-time bootstrap exception
 

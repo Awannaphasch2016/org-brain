@@ -8,14 +8,18 @@ import {
   APPROVAL_CHANNEL_ID,
   APPROVER_SLACK_ID,
   BOT_USER_ID,
+  ISO_WORKFLOWS_BOT_ID,
   RECORDS_BRANCH,
   REQUESTS_BRANCH,
   THREAD_SURFACE_CHANNELS,
   actionHash,
+  authorFromSlackMessage,
   approvalChannelConfigured,
   approvalRouteMode,
   canonicalRunDeclaration,
+  claimExecution,
   createApprovalHandlers,
+  decidedBlockId,
   deliverApprovalRequest,
   fileApprovalRequest,
   formatIct,
@@ -24,9 +28,11 @@ import {
   packetHash,
   parseApprovalRequestMention,
   renderApprovalCard,
+  renderDecidedCard,
   runDeclarationSha256,
   sha256Hex,
   validateRequest,
+  verifyApproval,
 } from "../lib/owner-approval.mjs";
 
 const root = new URL("..", import.meta.url);
@@ -76,13 +82,19 @@ function sha1(text) {
 }
 
 function approvalGithub(identity) {
-  const state = { files: new Map(), blobs: new Map() };
+  const state = { files: new Map(), blobs: new Map(), putQueue: [] };
   const fetchImpl = async (url, init = {}) => {
     const method = String(init.method ?? "GET").toUpperCase();
     const parsed = new URL(url);
     const { pathname } = parsed;
     const body = init.body ? JSON.parse(init.body) : undefined;
     if (method === "PUT" && pathname.includes("/contents/")) {
+      if (state.putQueue.length > 0) {
+        const status = state.putQueue.shift();
+        if (status === 409) return http({ message: "Conflict" }, 409);
+        if (status === 404) return http({ message: "Not Found" }, 404);
+        if (status === 422) return http({ message: "Branch not found" }, 422);
+      }
       if (body?.sha !== undefined) return http({ message: "sha was supplied" }, 422);
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
       const key = `${body.branch}:${filePath}`;
@@ -104,6 +116,10 @@ function approvalGithub(identity) {
       const text = state.blobs.get(blob);
       if (text == null) return http({ message: "Not Found" }, 404);
       return http({ encoding: "base64", content: Buffer.from(text).toString("base64"), sha: blob });
+    }
+    if (method === "GET" && pathname.includes("/git/ref/heads/")) {
+      if (pathname.endsWith("/heads/main")) return http({ object: { sha: "f".repeat(40) } });
+      return http({ message: "Not Found" }, 404);
     }
     if (method === "GET" && pathname === "/repos/Awannaphasch2016/org-brain") return http({ default_branch: "main" });
     if (method === "POST" && pathname.endsWith("/git/refs")) return http({ ref: body.ref }, 201);
@@ -139,8 +155,19 @@ function slackDouble({ users } = {}) {
       if (method === "chat.update") return { ok: true, ts: body.ts };
       if (method === "chat.postEphemeral") return { ok: true };
       if (method === "conversations.replies") {
-        const found = messages.filter((item) => item.channel === body.channel && (item.ts === body.ts || item.threadTs === body.ts));
-        return { ok: true, messages: found.map((item) => ({ ts: item.ts, user: item.user, bot_id: item.user === BOT ? "B0ISO" : undefined })) };
+        let found = messages.filter((item) => item.channel === body.channel && (item.ts === body.ts || item.threadTs === body.ts));
+        if (body.oldest && body.latest) {
+          found = found.filter((item) => item.ts >= body.oldest && item.ts <= body.latest);
+        }
+        found = found.slice(0, body.limit ?? found.length);
+        return {
+          ok: true,
+          messages: found.map((item) => ({
+            ts: item.ts,
+            ...(item.user ? { user: item.user } : {}),
+            ...(item.bot_id ? { bot_id: item.bot_id } : {}),
+          })),
+        };
       }
       throw new Error(`unexpected slack ${method}`);
     },
@@ -263,14 +290,16 @@ test("golden packet and run declaration hashes stay fixed", async () => {
   assert.equal(runDeclarationSha256(declaration), RUN_HASH);
   assert.equal(sha256Hex(RUN_CANONICAL), RUN_HASH);
   const body = RUN_CANONICAL.replace(/^iso-run-declaration\/1\n/, "");
+  const headed = (text) => `## Run declaration\n${text}`;
   const spaced = body.replace("owner: ISO Workflow Lead", "owner:   ISO \t Workflow   Lead");
-  assert.equal(canonicalRunDeclaration(spaced), RUN_CANONICAL);
+  assert.equal(canonicalRunDeclaration(headed(spaced)), RUN_CANONICAL);
   const nfd = body.replace("Lead", "Le\u0061\u0301d");
-  assert.equal(canonicalRunDeclaration(nfd), RUN_CANONICAL.replace("Lead", "Le\u00e1d"));
-  assert.notEqual(runDeclarationSha256(nfd), RUN_HASH);
-  assert.throws(() => canonicalRunDeclaration(body.replace("supersedes: none\n", "")), /missing supersedes/);
-  assert.throws(() => canonicalRunDeclaration(`${body}run: ISO-RUN-2\n`), /repeats run/);
-  assert.throws(() => canonicalRunDeclaration(`${body}note without a label\n`), /unlabeled/);
+  assert.equal(canonicalRunDeclaration(headed(nfd)), RUN_CANONICAL.replace("Lead", "Le\u00e1d"));
+  assert.notEqual(runDeclarationSha256(headed(nfd)), RUN_HASH);
+  assert.throws(() => canonicalRunDeclaration(headed(body.replace("supersedes: none\n", ""))), /missing supersedes/);
+  assert.throws(() => canonicalRunDeclaration(headed(`${body}run: ISO-RUN-2\n`)), /repeats run/);
+  assert.throws(() => canonicalRunDeclaration(headed(`${body}note without a label\n`)), /unlabeled/);
+  assert.throws(() => canonicalRunDeclaration(body), /no Run declaration heading/);
 });
 
 test("approval kinds bind a hash and reject Approve all", () => {
@@ -287,7 +316,7 @@ test("approval kinds bind a hash and reject Approve all", () => {
   assert.equal(actionHash({ requestId: "iso-req-1", ...mergeAction() }), ACTION_HASH);
   const card = renderApprovalCard({ ...request.actions[0], requestId: request.requestId });
   const labels = card.blocks.find((block) => block.type === "actions").elements.map((element) => element.text.text);
-  assert.deepEqual(labels, ["Approve", "Reject"]);
+  assert.deepEqual(labels, ["Approve", "Reject", "Refresh"]);
   assert.equal(labels.includes("Approve all"), false);
   for (const element of card.blocks.find((block) => block.type === "actions").elements) {
     const value = JSON.parse(element.value);
@@ -311,8 +340,15 @@ test("approval kinds bind a hash and reject Approve all", () => {
   }, "iso-req-2"));
   assert.deepEqual(
     renderApprovalCard({ ...decision.actions[0], requestId: "iso-req-2" }).blocks.find((block) => block.type === "actions").elements.map((element) => element.text.text),
-    ["Ship it", "Hold"],
+    ["Ship it", "Hold", "Refresh"],
   );
+  assert.throws(() => validateRequest(requestDocument({
+    key: "choice",
+    kind: "decision",
+    title: "Pick one",
+    statement: "Choose.",
+    target: { options: ["approve", "Hold"] },
+  }, "iso-req-9")), /decision target/);
   validateRequest(requestDocument({
     key: "deploy",
     kind: "deploy",
@@ -367,6 +403,8 @@ test("a click records one decision and never merges or deploys", async () => {
   assert.equal(result.record.decidedBy, APPROVER);
   assert.equal(result.record.actionHash, ACTION_HASH);
   assert.equal(result.record.decidedAt, ICT);
+  assert.equal(result.record.clickedCardTs, CENTRAL_TS);
+  assert.equal(result.record.slackRequestTs, undefined);
   assert.equal(formatIct(NOW), ICT);
   const puts = recordPuts(setup.github.client);
   assert.equal(puts.length, 1);
@@ -659,6 +697,138 @@ test("mentions parse only as a filing command and the slack hook stays ahead of 
   }
 });
 
+test("a pending statement is plain text and a decided card has a fixed block id", () => {
+  const request = validateRequest(requestDocument({
+    ...mergeAction(),
+    statement: "APPROVED by <@U0CFRUV378D> <!channel> <https://x|y> &lt;",
+  }));
+  const card = renderApprovalCard({ ...request.actions[0], requestId: request.requestId });
+  const statement = card.blocks.find((block) => block.type === "section" && block.text.type === "plain_text");
+  assert.equal(statement.text.text, "APPROVED by <@U0CFRUV378D> <!channel> <https://x|y> &lt;");
+  assert.equal(card.blocks.some((block) => String(block.block_id ?? "").startsWith("iso-approval-decided:")), false);
+  assert.equal(card.blocks.some((block) => block.type === "actions"), true);
+  const decided = renderDecidedCard({
+    requestId: "iso-req-1",
+    key: "merge",
+    actionHash: request.actions[0].actionHash,
+    decision: "approve",
+    decidedAt: ICT,
+  });
+  assert.equal(decided.blocks[0].block_id, decidedBlockId(request.actions[0].actionHash));
+  assert.equal(decided.blocks.some((block) => block.type === "actions"), false);
+});
+
+test("only the ISO Workflows bot authors a card", async () => {
+  assert.equal(authorFromSlackMessage({ user: BOT_USER_ID, bot_id: "BOTHERAPP" }), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ bot_id: ISO_WORKFLOWS_BOT_ID }), BOT_USER_ID);
+  assert.equal(authorFromSlackMessage({ bot_id: "BOTHERAPP" }), null);
+  assert.equal(authorFromSlackMessage({}), null);
+  assert.equal(authorFromSlackMessage({ user: "U0OTHER", bot_id: ISO_WORKFLOWS_BOT_ID }), null);
+  for (const message of [
+    { bot_id: "BOTHERAPP" },
+    {},
+    { user: "U0OTHER" },
+  ]) {
+    const setup = seedReady();
+    setup.slack.messages.length = 0;
+    for (const ref of setup.refs) {
+      setup.slack.messages.push({ channel: ref.channel, ts: ref.ts, threadTs: ref.threadTs, ...message });
+    }
+    const result = await handleApprovalClick(click(setup, approveButton(setup.request)));
+    assert.equal(result.reason, "card not by the bot");
+    assert.equal(recordPuts(setup.github.client).length, 0);
+  }
+  const setup = seedReady();
+  setup.slack.messages.length = 0;
+  for (const ref of setup.refs) {
+    setup.slack.messages.push({ channel: ref.channel, ts: ref.ts, threadTs: ref.threadTs, bot_id: ISO_WORKFLOWS_BOT_ID });
+  }
+  const recorded = await handleApprovalClick(click(setup, approveButton(setup.request)));
+  assert.equal(recorded.recorded, true);
+});
+
+test("a long thread still finds the card, and a conflict can be retried", async () => {
+  const setup = seedReady();
+  setup.slack.messages.length = 0;
+  for (let index = 0; index < 249; index += 1) {
+    setup.slack.messages.push({
+      channel: CENTRAL,
+      ts: `1690000000.${String(index).padStart(6, "0")}`,
+      threadTs: CENTRAL_TS,
+      user: "U0OTHER",
+    });
+  }
+  setup.slack.messages.push({ channel: CENTRAL, ts: CENTRAL_TS, threadTs: CENTRAL_TS, user: BOT });
+  setup.slack.messages.push({ channel: THREAD, ts: THREAD_CARD_TS, threadTs: THREAD_PARENT, user: BOT });
+  const recorded = await handleApprovalClick(click(setup, approveButton(setup.request)));
+  assert.equal(recorded.recorded, true);
+
+  const conflict = seedReady();
+  conflict.github.state.putQueue.push(409);
+  const retried = await handleApprovalClick(click(conflict, approveButton(conflict.request)));
+  assert.equal(retried.recorded, true);
+  assert.equal(recordPuts(conflict.github.client).length, 2);
+
+  const dropped = seedReady();
+  dropped.github.state.putQueue.push(409, 409);
+  const refused = await handleApprovalClick(click(dropped, approveButton(dropped.request)));
+  assert.equal(refused.reason, "not recorded, click again");
+  assert.equal(dropped.slack.calls.some((call) => call.method === "chat.postEphemeral" && call.body.text === "not recorded, click again"), true);
+  assert.equal([...dropped.github.state.files.keys()].some((key) => key.includes(":approvals/records/")), false);
+
+  for (const status of [404, 422]) {
+    const missing = seedReady();
+    missing.github.state.putQueue.push(status);
+    const created = await handleApprovalClick(click(missing, approveButton(missing.request)));
+    assert.equal(created.recorded, true, String(status));
+    assert.equal(missing.github.client.calls.some((call) => call.method === "POST" && call.path.endsWith("/git/refs")), true, String(status));
+  }
+});
+
+test("an execution marker is create-only and verifyApproval checks the decided card", async () => {
+  const github = approvalGithub();
+  const first = await claimExecution(github.client, { requestId: "iso-req-1", key: "merge", executorId: "bot-father", now: NOW });
+  assert.equal(first.status, "claimed");
+  const second = await claimExecution(github.client, { requestId: "iso-req-1", key: "merge", executorId: "bot-father", now: NOW });
+  assert.equal(second.status, "already-claimed");
+  assert.equal(second.recorded, false);
+  const request = validateRequest(requestDocument());
+  const action = { ...request.actions[0], requestId: request.requestId };
+  const record = {
+    requestId: "iso-req-1",
+    key: "merge",
+    actionHash: action.actionHash,
+    decision: "approve",
+    decidedBy: APPROVER,
+    clickedCardTs: CENTRAL_TS,
+    decidedAt: ICT,
+  };
+  const card = renderDecidedCard(record);
+  assert.equal(verifyApproval({ action, record, card }).ok, true);
+  assert.equal(verifyApproval({ action, record: { ...record, actionHash: "0".repeat(64) }, card }).ok, false);
+  assert.equal(verifyApproval({ action, record, card: renderApprovalCard(action) }).reason, "card is not decided");
+
+  const filed = approvalGithub();
+  storeText(filed, REQUESTS_BRANCH, "approvals/requests/iso-req-6.json", `${JSON.stringify(validateRequest(requestDocument({
+    key: "run",
+    kind: "experiment-run",
+    title: "Start ISO-RUN-1",
+    statement: "Start the run.",
+    target: { rowUrl: "https://app.notion.com/p/iso-run-1", contentSha256: RUN_HASH },
+  }, "iso-req-6")))}\n`);
+  const experiment = await deliverApprovalRequest({
+    requestId: "iso-req-6",
+    channelId: CENTRAL,
+    threadChannel: THREAD,
+    threadTs: THREAD_PARENT,
+    client: filed.client,
+    slack: slackDouble(),
+    env: ENV,
+  });
+  assert.equal(experiment.reason, "experiment-run hash is not recomputed at card time");
+  assert.equal(experiment.posted, false);
+});
+
 test("the gate approver pin ignores FACTORY_GATE_APPROVER_IDS", () => {
   assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0CFRUV378D, UEXTRA" }), [APPROVER]);
   assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0OTHER" }), [APPROVER]);
@@ -681,6 +851,6 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
   const canonicalText = canonical.toString("utf8");
   assert.equal(canonicalText.includes("<channelId>"), true);
   assert.equal(canonicalText.includes("<approvalRowUrl>"), true);
-  assert.equal(sha256Hex(canonical), "4ff04e4d224129a49f7deae586f8f9d49a42f68392df65dd7bd0aff61ba085fb");
-  assert.equal(sha256Hex(personas), "1ac8edbdb5f5df9bee4e279919f05288dd480482cbd2d43e449fc35dea43eb4e");
+  assert.equal(sha256Hex(canonical), "7cad8bd27dc70141865d95373176d40a140e3a6ce045b5bfd36bda484dee4f86");
+  assert.equal(sha256Hex(personas), "395aa7a2b4afe5c7d9e4105592e772d5548b3ebd3adf15eb1a176837c49db7ad");
 });
