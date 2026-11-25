@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { gateApproverIds } from "../lib/gate-actions.mjs";
-import { RULESET_TEMPLATES } from "../lib/ruleset-spec.mjs";
+import { branchRuleTypes, filledRulesetTemplates, RULESET_TEMPLATES, rulesetSpecSha256 } from "../lib/ruleset-spec.mjs";
 import { GithubClient } from "../lib/github.mjs";
 import {
   APPROVAL_CHANNEL_ID,
@@ -36,9 +36,14 @@ import {
   renderDecidedCard,
   runDeclarationSha256,
   sha256Hex,
+  shaReachableFromMain,
+  useAppPinsForTests,
   validateRequest,
   verifyApproval,
+  appCommitListOk,
 } from "../lib/owner-approval.mjs";
+
+useAppPinsForTests({ appId: 1, botLogin: "iso-workflows[bot]", botUserId: 1 });
 
 const root = new URL("..", import.meta.url);
 const APPROVER = APPROVER_SLACK_ID;
@@ -93,7 +98,7 @@ function approvalGithub(identity) {
     blobs: new Map(),
     putQueue: [],
     authors: new Map(),
-    rulesets: RULESET_TEMPLATES.map((template) => ({ ...template, id: 9, current_user_can_bypass: "never" })),
+    rulesets: filledRulesetTemplates(1).map((template, index) => ({ ...template, id: index + 1, current_user_can_bypass: "never" })),
   };
   const fetchImpl = async (url, init = {}) => {
     const method = String(init.method ?? "GET").toUpperCase();
@@ -141,6 +146,13 @@ function approvalGithub(identity) {
     }
     if (method === "GET" && pathname.endsWith("/rulesets")) {
       return http(state.rulesets ?? []);
+    }
+    if (method === "GET" && pathname.includes("/rules/branches/")) {
+      const branch = decodeURIComponent(pathname.split("/rules/branches/")[1]);
+      return http(branchRuleTypes(branch).map((type) => ({ type })));
+    }
+    if (method === "GET" && pathname.includes("/compare/")) {
+      return http({ status: state.compareStatus ?? "behind" });
     }
     if (method === "GET" && pathname.includes("/contents/")) {
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
@@ -197,7 +209,12 @@ function slackDouble({ users } = {}) {
         messages.push({ channel: body.channel, ts, threadTs: body.thread_ts ?? ts, user: BOT });
         return { ok: true, ts, channel: body.channel, message: { user: BOT, ts, bot_id: ISO_WORKFLOWS_BOT_ID } };
       }
-      if (method === "chat.update") return { ok: true, ts: body.ts };
+      if (method === "chat.update") {
+        messages.forEach((item) => {
+          if (item.channel === body.channel && item.ts === body.ts) item.blocks = body.blocks;
+        });
+        return { ok: true, ts: body.ts };
+      }
       if (method === "chat.postEphemeral") return { ok: true };
       if (method === "conversations.replies") {
         let found = messages.filter((item) => item.channel === body.channel && (item.ts === body.ts || item.threadTs === body.ts));
@@ -211,6 +228,7 @@ function slackDouble({ users } = {}) {
             ts: item.ts,
             ...(item.user ? { user: item.user } : {}),
             ...(item.bot_id ? { bot_id: item.bot_id } : {}),
+            ...(item.blocks ? { blocks: item.blocks } : {}),
           })),
         };
       }
@@ -260,7 +278,15 @@ function cardRefs(author = BOT) {
 }
 
 function seedSlack(slack, refs, user = BOT) {
-  for (const ref of refs) slack.messages.push({ channel: ref.channel, ts: ref.ts, threadTs: ref.threadTs, user });
+  for (const ref of refs) {
+    slack.messages.push({
+      channel: ref.channel,
+      ts: ref.ts,
+      threadTs: ref.threadTs,
+      user,
+      ...(user === BOT ? { bot_id: ISO_WORKFLOWS_BOT_ID } : {}),
+    });
+  }
 }
 
 function seedReady(action = mergeAction(), requestId = "iso-req-1") {
@@ -657,7 +683,6 @@ test("connector mode, a missing signing secret, and a non-app identity record no
   for (const identity of [
     { kind: "personal-token", botLogin: "anak", label: "personal-token (anak)" },
     { kind: "github-app", botLogin: "iso-workflows", label: "github-app (iso-workflows)" },
-    { kind: "github-connector", botLogin: "iso-workflows[bot]", label: "github-connector (iso-workflows[bot])" },
     { kind: "github-app", botLogin: "cursor[bot]", label: "github-app (cursor[bot])" },
   ]) {
     const setup = seedReady();
@@ -886,15 +911,19 @@ test("an execution marker is create-only and verifyApproval checks the decided c
   };
   const card = renderDecidedCard(record);
   assert.equal(verifyApproval({ action, record, card }).ok, false);
-  assert.equal(verifyApproval({ action, record, card }).reason, "record provenance was not checked");
+  assert.equal(verifyApproval({ action, record, card }).reason, "card was not fetched");
   const setup = seedReady();
   const clicked = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(clicked.recorded, true);
   const decided = renderDecidedCard(clicked.record);
-  assert.equal((await verifyApproval({ client: setup.github.client, action, card: decided })).ok, true);
-  assert.equal((await verifyApproval({ client: setup.github.client, action, card: renderApprovalCard(action) })).reason, "card is not decided");
+  assert.equal(verifyApproval({ client: setup.github.client, action, card: decided }).reason, "card was not fetched");
+  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).ok, true);
+  const stored = setup.github.state.files.get(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`);
   storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify({ ...clicked.record, actionHash: "0".repeat(64) }));
-  assert.equal((await verifyApproval({ client: setup.github.client, action, card: decided })).reason, "RECORD_MISMATCH");
+  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).reason, "RECORD_MISMATCH");
+  storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", stored);
+  setup.slack.messages.forEach((item) => { delete item.bot_id; });
+  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).reason, "card not by the bot");
 
   const filed = approvalGithub();
   storeText(filed, REQUESTS_BRANCH, "approvals/requests/iso-req-6.json", `${JSON.stringify(validateRequest(requestDocument({
@@ -917,7 +946,7 @@ test("an execution marker is create-only and verifyApproval checks the decided c
   assert.equal(experiment.posted, true);
 });
 
-test("a planted record is not a decision, and a real click replaces it", async () => {
+test("a planted record is held and not overwritten", async () => {
   const forged = (action, refs) => ({
     requestId: "iso-req-1",
     key: "merge",
@@ -945,7 +974,9 @@ test("a planted record is not a decision, and a real click replaces it", async (
   storeText(refresh.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(forged(action, refresh.refs)), "anak");
   const refreshed = await handleApprovalClick(click(refresh, buttonById(refresh.request, "iso-approval:refresh")));
   assert.equal(refreshed.reason, "RECORD_MISMATCH");
-  assert.equal(refresh.slack.calls.filter((call) => call.method === "chat.update").every((call) => call.body.text.startsWith("HELD: record mismatch")), true);
+  const refreshUpdates = refresh.slack.calls.filter((call) => call.method === "chat.update");
+  assert.equal(refreshUpdates.length, 2);
+  assert.equal(refreshUpdates.every((call) => call.body.text.startsWith("HELD: record mismatch")), true);
 
   const tampered = seedReady();
   storeText(tampered.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify({
@@ -1061,6 +1092,94 @@ test("a bootstrap card files one lock and an expired click writes no record", as
   assert.equal(clicked.reason, "EXPIRED");
   assert.equal(clicked.recorded, false);
   assert.equal(late.slack.calls.some((call) => call.method === "chat.update" && call.body.text === "EXPIRED: no decision recorded"), true);
+});
+
+test("a personal token claims a marker and can verify an App-written record", async () => {
+  const personal = approvalGithub({ kind: "personal-token", botLogin: "anak", label: "personal-token (anak)" });
+  const first = await claimExecution(personal.client, { requestId: "iso-req-pt", key: "merge", executorId: "coding-agent", now: NOW });
+  const second = await claimExecution(personal.client, { requestId: "iso-req-pt", key: "merge", executorId: "coding-agent", now: NOW });
+  assert.equal(first.status, "claimed");
+  assert.equal(first.execution.committerLogin, "anak");
+  assert.equal(second.status, "already-claimed");
+  const setup = seedReady();
+  const clicked = await handleApprovalClick(click(setup, approveButton(setup.request)));
+  assert.equal(clicked.recorded, true);
+  setup.github.client.identity = { kind: "personal-token", botLogin: "anak" };
+  const action = { ...setup.request.actions[0], requestId: setup.request.requestId };
+  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).ok, true);
+});
+
+test("compare accepts an ancestor of main and a second commit is not app provenance", async () => {
+  const source = await readFile(new URL("lib/owner-approval.mjs", root), "utf8");
+  assert.equal(source.includes("VERCEL_TOKEN"), false);
+  assert.equal(source.includes("api.vercel.com"), false);
+  for (const status of ["behind", "identical"]) {
+    assert.equal(await shaReachableFromMain({ request: async () => ({ status }) }, "c".repeat(40)), true);
+  }
+  assert.equal(await shaReachableFromMain({ request: async () => { throw new Error("down"); } }, "c".repeat(40)), false);
+  const rollback = validateRequest(requestDocument({
+    key: "rollback",
+    kind: "rollback",
+    title: "Roll back",
+    statement: "Roll back production.",
+    target: {
+      vercelTeam: "team_HH56QrlGNZZs3DWHlokF5NlZ",
+      vercelProject: "prj_D4lCsHuXRH1ZLAXvliq5BkCDHwbm",
+      target: "production",
+      deploymentId: "dpl_1",
+      gitSha40: "c".repeat(40),
+    },
+  }, "iso-req-rb"));
+  const github = approvalGithub();
+  github.state.compareStatus = "identical";
+  storeText(github, REQUESTS_BRANCH, "approvals/requests/iso-req-rb.json", `${JSON.stringify(rollback)}\n`);
+  const filed = await deliverApprovalRequest({
+    requestId: "iso-req-rb",
+    channelId: CENTRAL,
+    threadChannel: THREAD,
+    threadTs: THREAD_PARENT,
+    client: github.client,
+    slack: slackDouble(),
+    env: ENV,
+  });
+  assert.equal(filed.status, "filed");
+  github.state.compareStatus = "diverged";
+  const again = approvalGithub();
+  again.state.compareStatus = "diverged";
+  storeText(again, REQUESTS_BRANCH, "approvals/requests/iso-req-rb.json", `${JSON.stringify(rollback)}\n`);
+  const refused = await deliverApprovalRequest({
+    requestId: "iso-req-rb",
+    channelId: CENTRAL,
+    threadChannel: THREAD,
+    threadTs: THREAD_PARENT,
+    client: again.client,
+    slack: slackDouble(),
+    env: ENV,
+  });
+  assert.equal(refused.reason, "gitSha40 is not reachable from main");
+  const commit = {
+    author: { login: "iso-workflows[bot]", id: 1 },
+    committer: { login: "iso-workflows[bot]", id: 1 },
+    commit: { verification: { verified: true } },
+  };
+  assert.equal(appCommitListOk([commit, commit], "iso-workflows[bot]", 1), false);
+  const filled = filledRulesetTemplates(1);
+  for (const template of RULESET_TEMPLATES) {
+    const next = filled.find((item) => item.name === template.name);
+    const same = rulesetSpecSha256(template) === rulesetSpecSha256(next);
+    assert.equal(same, template.name !== "iso-approval-records-app-only");
+  }
+  assert.equal(filledRulesetTemplates(Number("<PH:github-app-id>")), null);
+});
+
+test("verify-approval exits 2 without arguments", async () => {
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, [new URL("scripts/verify-approval.mjs", root).pathname], { stdio: "ignore" });
+  const code = await new Promise((resolve) => child.on("exit", resolve));
+  assert.equal(code, 2);
+  const cli = await readFile(new URL("scripts/verify-approval.mjs", root), "utf8");
+  assert.equal(cli.includes('kind: "github-app"'), false);
+  assert.equal(cli.includes("personal-token"), true);
 });
 
 test("the gate approver pin ignores FACTORY_GATE_APPROVER_IDS", () => {
