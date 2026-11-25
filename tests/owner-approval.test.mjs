@@ -911,19 +911,20 @@ test("an execution marker is create-only and verifyApproval checks the decided c
   };
   const card = renderDecidedCard(record);
   assert.equal(verifyApproval({ action, record, card }).ok, false);
-  assert.equal(verifyApproval({ action, record, card }).reason, "card was not fetched");
+  assert.equal(verifyApproval({ action, record, card }).reason, "record provenance was not checked");
   const setup = seedReady();
   const clicked = await handleApprovalClick(click(setup, approveButton(setup.request)));
   assert.equal(clicked.recorded, true);
-  const decided = renderDecidedCard(clicked.record);
-  assert.equal(verifyApproval({ client: setup.github.client, action, card: decided }).reason, "card was not fetched");
-  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).ok, true);
+  assert.equal(clicked.record.cardAttestation.bot_id, ISO_WORKFLOWS_BOT_ID);
+  const verified = { ...setup.request.actions[0], requestId: setup.request.requestId };
+  assert.equal((await verifyApproval({ client: setup.github.client, action: verified })).ok, true);
   const stored = setup.github.state.files.get(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`);
   storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify({ ...clicked.record, actionHash: "0".repeat(64) }));
-  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).reason, "RECORD_MISMATCH");
-  storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", stored);
-  setup.slack.messages.forEach((item) => { delete item.bot_id; });
-  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).reason, "card not by the bot");
+  assert.equal((await verifyApproval({ client: setup.github.client, action: verified })).reason, "RECORD_MISMATCH");
+  const tamperedCard = JSON.parse(stored);
+  tamperedCard.cardAttestation.bot_id = "B0OTHER";
+  storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(tamperedCard));
+  assert.equal((await verifyApproval({ client: setup.github.client, action: verified })).reason, "card not by the bot");
 
   const filed = approvalGithub();
   storeText(filed, REQUESTS_BRANCH, "approvals/requests/iso-req-6.json", `${JSON.stringify(validateRequest(requestDocument({
@@ -1106,7 +1107,7 @@ test("a personal token claims a marker and can verify an App-written record", as
   assert.equal(clicked.recorded, true);
   setup.github.client.identity = { kind: "personal-token", botLogin: "anak" };
   const action = { ...setup.request.actions[0], requestId: setup.request.requestId };
-  assert.equal((await verifyApproval({ client: setup.github.client, slack: setup.slack, action })).ok, true);
+  assert.equal((await verifyApproval({ client: setup.github.client, action })).ok, true);
 });
 
 test("compare accepts an ancestor of main and a second commit is not app provenance", async () => {
@@ -1180,6 +1181,7 @@ test("verify-approval exits 2 without arguments", async () => {
   const cli = await readFile(new URL("scripts/verify-approval.mjs", root), "utf8");
   assert.equal(cli.includes('kind: "github-app"'), false);
   assert.equal(cli.includes("personal-token"), true);
+  assert.equal(cli.includes("SLACK_BOT_TOKEN"), false);
 });
 
 test("the gate approver pin ignores FACTORY_GATE_APPROVER_IDS", () => {
