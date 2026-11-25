@@ -82,7 +82,8 @@ function sha1(text) {
 }
 
 function approvalGithub(identity) {
-  const state = { files: new Map(), blobs: new Map(), putQueue: [] };
+  const resolved = identity ?? { kind: "github-app", botLogin: "iso-workflows[bot]", label: "github-app (iso-workflows[bot])" };
+  const state = { files: new Map(), blobs: new Map(), putQueue: [], authors: new Map() };
   const fetchImpl = async (url, init = {}) => {
     const method = String(init.method ?? "GET").toUpperCase();
     const parsed = new URL(url);
@@ -95,13 +96,31 @@ function approvalGithub(identity) {
         if (status === 404) return http({ message: "Not Found" }, 404);
         if (status === 422) return http({ message: "Branch not found" }, 422);
       }
-      if (body?.sha !== undefined) return http({ message: "sha was supplied" }, 422);
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
       const key = `${body.branch}:${filePath}`;
-      if (state.files.has(key)) return http({ message: '"sha" wasn\'t supplied.' }, 422);
       const text = Buffer.from(body.content, "base64").toString("utf8");
+      if (body?.sha !== undefined) {
+        if (state.rejectSha) return http({ message: "sha was supplied" }, 422);
+        const current = state.files.get(key);
+        if (current == null) return http({ message: "Not Found" }, 404);
+        if (body.sha !== sha1(current)) return http({ message: "sha mismatch" }, 409);
+        state.files.set(key, text);
+        state.authors.set(key, resolved.botLogin);
+        state.blobs.set(sha1(text), text);
+        return http({ content: { sha: sha1(text) } }, 200);
+      }
+      if (state.files.has(key)) return http({ message: '"sha" wasn\'t supplied.' }, 422);
       state.files.set(key, text);
+      state.authors.set(key, resolved.botLogin);
       return http({ content: { sha: "d".repeat(40) } }, 201);
+    }
+    if (method === "GET" && pathname.endsWith("/commits")) {
+      if (state.commitsStatus) return http({ message: "commits unavailable" }, state.commitsStatus);
+      const key = `${parsed.searchParams.get("sha")}:${parsed.searchParams.get("path")}`;
+      const login = state.files.has(key) ? state.authors.get(key) : undefined;
+      if (!login) return http([]);
+      const committer = state.committers?.get(key) ?? login;
+      return http([{ sha: "c".repeat(40), author: { login }, committer: { login: committer } }]);
     }
     if (method === "GET" && pathname.includes("/contents/")) {
       const filePath = decodeURIComponent(pathname.split("/contents/")[1]);
@@ -130,7 +149,7 @@ function approvalGithub(identity) {
     token: "test-token",
     owner: "Awannaphasch2016",
     repo: "org-brain",
-    identity: identity ?? { kind: "github-app", botLogin: "iso-workflows[bot]", label: "github-app (iso-workflows[bot])" },
+    identity: resolved,
   });
   return { client, state };
 }
@@ -197,10 +216,13 @@ function requestDocument(action = mergeAction(), requestId = "iso-req-1") {
   return { schema: "iso-approval-request/1", requestId, actions: [action] };
 }
 
-function storeText(github, branch, path, text) {
-  github.state.files.set(`${branch}:${path}`, text);
+function storeText(github, branch, path, text, author = "iso-workflows[bot]") {
+  const key = `${branch}:${path}`;
+  github.state.files.set(key, text);
   const blob = sha1(text);
   github.state.blobs.set(blob, text);
+  if (author) github.state.authors.set(key, author);
+  else github.state.authors.delete(key);
   return blob;
 }
 
@@ -250,9 +272,12 @@ function click(setup, button, overrides = {}) {
 }
 
 function approveButton(request) {
-  const action = { ...request.actions[0], requestId: request.requestId };
-  const rendered = renderApprovalCard(action);
-  return rendered.blocks.find((block) => block.type === "actions").elements[0];
+  return buttonById(request, "iso-approval:approve");
+}
+
+function buttonById(request, actionId) {
+  const rendered = renderApprovalCard({ ...request.actions[0], requestId: request.requestId });
+  return rendered.blocks.find((block) => block.type === "actions").elements.find((element) => element.action_id === actionId);
 }
 
 function recordPuts(client) {
@@ -586,6 +611,7 @@ test("connector mode, a missing signing secret, and a non-app identity record no
     { kind: "personal-token", botLogin: "anak", label: "personal-token (anak)" },
     { kind: "github-app", botLogin: "iso-workflows", label: "github-app (iso-workflows)" },
     { kind: "github-connector", botLogin: "iso-workflows[bot]", label: "github-connector (iso-workflows[bot])" },
+    { kind: "github-app", botLogin: "cursor[bot]", label: "github-app (cursor[bot])" },
   ]) {
     const setup = seedReady();
     setup.github.client.identity = identity;
@@ -804,9 +830,16 @@ test("an execution marker is create-only and verifyApproval checks the decided c
     decidedAt: ICT,
   };
   const card = renderDecidedCard(record);
-  assert.equal(verifyApproval({ action, record, card }).ok, true);
-  assert.equal(verifyApproval({ action, record: { ...record, actionHash: "0".repeat(64) }, card }).ok, false);
-  assert.equal(verifyApproval({ action, record, card: renderApprovalCard(action) }).reason, "card is not decided");
+  assert.equal(verifyApproval({ action, record, card }).ok, false);
+  assert.equal(verifyApproval({ action, record, card }).reason, "record provenance was not checked");
+  const setup = seedReady();
+  const clicked = await handleApprovalClick(click(setup, approveButton(setup.request)));
+  assert.equal(clicked.recorded, true);
+  const decided = renderDecidedCard(clicked.record);
+  assert.equal((await verifyApproval({ client: setup.github.client, action, card: decided })).ok, true);
+  assert.equal((await verifyApproval({ client: setup.github.client, action, card: renderApprovalCard(action) })).reason, "card is not decided");
+  storeText(setup.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify({ ...clicked.record, actionHash: "0".repeat(64) }));
+  assert.equal((await verifyApproval({ client: setup.github.client, action, card: decided })).reason, "RECORD_MISMATCH");
 
   const filed = approvalGithub();
   storeText(filed, REQUESTS_BRANCH, "approvals/requests/iso-req-6.json", `${JSON.stringify(validateRequest(requestDocument({
@@ -827,6 +860,99 @@ test("an execution marker is create-only and verifyApproval checks the decided c
   });
   assert.equal(experiment.reason, "experiment-run hash is not recomputed at card time");
   assert.equal(experiment.posted, false);
+});
+
+test("a planted record is not a decision, and a real click replaces it", async () => {
+  const forged = (action, refs) => ({
+    requestId: "iso-req-1",
+    key: "merge",
+    actionHash: action.actionHash,
+    decision: "approve",
+    decidedBy: APPROVER,
+    cardRefs: [...refs, { surface: "central", channel: "C0ATTACKER", ts: "1.1", threadTs: "1.1", authorUserId: BOT }],
+    clickedCardTs: CENTRAL_TS,
+    decidedAt: "2026-11-25T13:00:00.000+07:00",
+  });
+
+  const planted = seedReady();
+  const action = { ...planted.request.actions[0], requestId: planted.request.requestId };
+  storeText(planted.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(forged(action, planted.refs)), "anak");
+  const rejected = await handleApprovalClick(click(planted, buttonById(planted.request, "iso-approval:reject")));
+  assert.equal(rejected.status, "recorded");
+  assert.equal(rejected.record.decision, "reject");
+  const updates = planted.slack.calls.filter((call) => call.method === "chat.update");
+  assert.equal(updates.length, 2);
+  assert.equal(updates.every((call) => call.body.text.startsWith("REJECTED by <@U0CFRUV378D>")), true);
+  assert.equal(updates.some((call) => call.body.channel === "C0ATTACKER"), false);
+  assert.equal(verifyApproval({ action, record: forged(action, planted.refs), card: { blocks: updates[0].body.blocks } }).ok, false);
+
+  const refresh = seedReady();
+  storeText(refresh.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(forged(action, refresh.refs)), "anak");
+  const refreshed = await handleApprovalClick(click(refresh, buttonById(refresh.request, "iso-approval:refresh")));
+  assert.equal(refreshed.reason, "RECORD_MISMATCH");
+  assert.equal(refresh.slack.calls.some((call) => call.method === "chat.update"), false);
+
+  const tampered = seedReady();
+  storeText(tampered.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify({
+    ...forged(action, tampered.refs),
+    actionHash: "0".repeat(64),
+    decidedAt: "x",
+  }));
+  const approved = await handleApprovalClick(click(tampered, approveButton(tampered.request)));
+  assert.equal(approved.status, "recorded");
+  assert.equal(approved.record.actionHash, action.actionHash);
+  const shown = tampered.slack.calls.find((call) => call.method === "chat.update").body.text;
+  assert.equal(shown.includes(action.actionHash), true);
+  assert.equal(shown.includes("0".repeat(64)), false);
+  assert.equal((await verifyApproval({
+    client: tampered.github.client,
+    action,
+    card: { blocks: tampered.slack.calls.find((call) => call.method === "chat.update").body.blocks },
+  })).ok, true);
+
+  const blocked = seedReady();
+  blocked.github.state.commitsStatus = 500;
+  blocked.github.state.rejectSha = true;
+  storeText(blocked.github, RECORDS_BRANCH, "approvals/records/iso-req-1/merge.json", JSON.stringify(forged(action, blocked.refs)), "anak");
+  const held = await handleApprovalClick(click(blocked, buttonById(blocked.request, "iso-approval:reject")));
+  assert.equal(held.reason, "RECORD_PROVENANCE_FAIL");
+  assert.equal(held.recorded, false);
+  assert.equal(blocked.slack.calls.some((call) => call.method === "chat.update"), false);
+  assert.equal(JSON.parse(blocked.github.state.files.get(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`)).decision, "approve");
+
+  const foreignPending = seedReady();
+  storeText(foreignPending.github, RECORDS_BRANCH, "approvals/pending/iso-req-1.json", foreignPending.github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/iso-req-1.json`), "anak");
+  const pending = await handleApprovalClick(click(foreignPending, approveButton(foreignPending.request)));
+  assert.equal(pending.reason, "RECORD_PROVENANCE_FAIL");
+  assert.equal(recordPuts(foreignPending.github.client).length, 0);
+
+  const relayed = seedReady();
+  relayed.github.state.committers = new Map([[`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`, "web-flow"]]);
+  const first = await handleApprovalClick(click(relayed, approveButton(relayed.request)));
+  assert.equal(first.recorded, true);
+  relayed.github.state.authors.set(`${RECORDS_BRANCH}:approvals/records/iso-req-1/merge.json`, "iso-workflows[bot]");
+  const second = await handleApprovalClick(click(relayed, approveButton(relayed.request), { channelId: THREAD, messageTs: THREAD_CARD_TS, threadTs: THREAD_PARENT }));
+  assert.equal(second.status, "recorded");
+  assert.equal(second.record.decision, "approve");
+});
+
+test("a thread parent returned first does not hide the card", async () => {
+  const setup = seedReady();
+  const original = setup.slack.request.bind(setup.slack);
+  setup.slack.request = async (method, body) => {
+    if (method !== "conversations.replies") return original(method, body);
+    const parent = { ts: body.ts, user: APPROVER };
+    const replies = setup.slack.messages
+      .filter((item) => item.channel === body.channel && item.ts !== body.ts && item.ts >= body.oldest && item.ts <= body.latest)
+      .map((item) => ({ ts: item.ts, user: item.user }));
+    return { ok: true, messages: [parent, ...replies].slice(0, body.limit ?? 1000) };
+  };
+  const result = await handleApprovalClick(click(setup, approveButton(setup.request), {
+    channelId: THREAD,
+    messageTs: THREAD_CARD_TS,
+    threadTs: THREAD_PARENT,
+  }));
+  assert.equal(result.status, "recorded");
 });
 
 test("the gate approver pin ignores FACTORY_GATE_APPROVER_IDS", () => {
@@ -851,6 +977,6 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
   const canonicalText = canonical.toString("utf8");
   assert.equal(canonicalText.includes("<channelId>"), true);
   assert.equal(canonicalText.includes("<approvalRowUrl>"), true);
-  assert.equal(sha256Hex(canonical), "7cad8bd27dc70141865d95373176d40a140e3a6ce045b5bfd36bda484dee4f86");
-  assert.equal(sha256Hex(personas), "395aa7a2b4afe5c7d9e4105592e772d5548b3ebd3adf15eb1a176837c49db7ad");
+  assert.equal(sha256Hex(canonical), "22df083f1e6845425265d5ea94fcb2cf2fb80ff674f2a72cb4912f168c1b752f");
+  assert.equal(sha256Hex(personas), "1ac9117af2196f816137eccbef3e42127cc8b35e7a64df946c86ee02153747cc");
 });

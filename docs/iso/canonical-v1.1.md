@@ -25,12 +25,12 @@ Merge to main · deploy or production change · secrets, infra or env change · 
 - **Approver:** Anak, Slack user `U0CFRUV378D`, and nobody else.
 - **Surface (a), central list:** the private channel #iso-approvals (`<channelId>`). Its only members are Anak (`U0CFRUV378D`) and the bot (`U0CG2QNQRLM`).
 - **Surface (b), in-thread cards:** the same card, posted by the bot in the eve thread the request came from (channel `C0CG6SG8PNW`).
-- **Record of truth:** the app-written record, one per action, at `approvals/records/<requestId>/<key>.json` on branch `iso-approval-records` of Awannaphasch2016/org-brain, committed by the ISO Workflows GitHub App (commit author ending in `[bot]`). Neither Slack message is the record; both are views of it. A click records a decision; it never merges or deploys.
+- **Record of truth:** the app-written record, one per action, at `approvals/records/<requestId>/<key>.json` on branch `iso-approval-records` of Awannaphasch2016/org-brain, committed by the ISO Workflows GitHub App (commit author is the authenticated GitHub App's own `[bot]` login). Neither Slack message is the record; both are views of it. A click records a decision; it never merges or deploys.
 
 ## Verification rule
 
 Before any Yes-Needed action, the acting agent needs all of these:
-1. an app-written record (commit author ending in `[bot]`) whose `actionHash` equals the hash the agent recomputes itself from the exact action it is about to take, with `decision` = `approve`;
+1. an app-written record (commit author is the authenticated GitHub App's own `[bot]` login) whose `actionHash` equals the hash the agent recomputes itself from the exact action it is about to take, with `decision` = `approve`;
 2. a bot-authored (`U0CG2QNQRLM`) card on either surface whose block id is `iso-approval-decided:<actionHash>`, with no actions block, showing APPROVED, and with the same `requestId` and hash;
 3. the recorded clicker is exactly `U0CFRUV378D`.
 Then it acts once: it first writes a create-only marker at `approvals/executions/<requestId>/<key>.json` on `iso-approval-records`, and if that file already exists it does not act. It logs the record commit SHA and the card ts in the Compliance Log. If any check fails, it doesn't act and files a gap.

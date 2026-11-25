@@ -17,6 +17,7 @@ export function canonicalRunDeclaration(text: string): string;
 export function runDeclarationSha256(text: string): string;
 export function formatIct(input: Date | number | string): string;
 export function approvalRouteMode(env?: NodeJS.ProcessEnv): { ok: true } | { ok: false; reason: string };
+export function authenticatedAppBotLogin(identity: { kind?: string; botLogin?: string } | null | undefined): string | null;
 export function assertAppIdentity(identity: { kind?: string; botLogin?: string } | null | undefined): { ok: true } | { ok: false; reason: string };
 export function actionHash(action: {
   requestId: string;
@@ -59,7 +60,8 @@ export function parseApprovalRequestMention(text: string): string | null;
 export function authorFromSlackMessage(message: { user?: string; bot_id?: string } | null | undefined): string | null;
 export function decidedBlockId(hash: string): string;
 export function verifyApproval(input: {
-  action: {
+  client?: ApprovalClient;
+  action?: {
     requestId: string;
     key: string;
     kind: string;
@@ -67,7 +69,7 @@ export function verifyApproval(input: {
     statement: string;
     target: unknown;
   };
-  record: {
+  record?: {
     requestId?: string;
     key?: string;
     actionHash?: string;
@@ -76,8 +78,8 @@ export function verifyApproval(input: {
     clickedCardTs?: string;
     decidedAt?: string;
   };
-  card: { blocks?: readonly { type?: string; block_id?: string }[] };
-}): { ok: true; actionHash: string; clickedCardTs: string | null; decidedAt: string | null } | { ok: false; reason: string };
+  card?: { blocks?: readonly { type?: string; block_id?: string }[] };
+}): { ok: false; reason: string } | Promise<{ ok: true; actionHash: string; clickedCardTs: string | null; decidedAt: string | null } | { ok: false; reason: string }>;
 export function claimExecution(
   client: {
     owner: string;
