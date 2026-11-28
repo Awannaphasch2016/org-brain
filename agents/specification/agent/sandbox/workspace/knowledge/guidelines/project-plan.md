@@ -45,7 +45,7 @@ At least one `I-nnn` row. Every row cites at least one known `IS-nnn`. Every `IS
 
 ## 5. Economic evaluation
 
-Final person-day figures and the economic assumptions come from a named human whose Slack id is on `FACTORY_GATE_APPROVER_IDS`. An answer from anyone else may be stored as input only and cannot satisfy a final figure. A suggested duration appears only in the suggestion column and contains the word "suggestion". "to be agreed" is allowed for the day rate and for money totals. When any final figure is present, the estimator name and date are present. The estimator name matches that responder's Slack display name.
+Final person-day figures and the economic assumptions come from a named human whose Slack id is the pinned gate approver `U0CFRUV378D`. An answer from anyone else may be stored as input only and cannot satisfy a final figure. A suggested duration appears only in the suggestion column and contains the word "suggestion". "to be agreed" is allowed for the day rate and for money totals. When any final figure is present, the estimator name and date are present. The estimator name matches that responder's Slack display name.
 
 PEL field keys:
 

@@ -50,9 +50,10 @@ test("stage table offers only the actions for that stage", () => {
   const baseline = renderGateCard(cardInput("tor-baseline"));
   assert.equal(baseline.blocks.some((block) => block.type === "actions"), false);
   assert.equal(gateApproverIds({}).join(","), ANAK);
-  assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0CFRUV378D, UEXTRA" }), [ANAK, "UEXTRA"]);
-  assert.throws(() => gateApproverIds({ FACTORY_GATE_APPROVER_IDS: " , " }), /fail-closed/);
-  assert.throws(() => gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "WBOTUSER01" }), /fail-closed/);
+  assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0CFRUV378D, UEXTRA" }), [ANAK]);
+  assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: " , " }), [ANAK]);
+  assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "WBOTUSER01" }), [ANAK]);
+  assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0OTHER" }), [ANAK]);
 });
 
 test("the SRS card offers Reject, Approve, and Revise and each routes to its handler", async () => {
@@ -90,6 +91,19 @@ test("the SRS card offers Reject, Approve, and Revise and each routes to its han
     assert.equal(harness.state.merges.length, expected[action].merges, action);
     assert.equal(harness.state.closes.length, expected[action].closes, action);
   }
+});
+
+test("FACTORY_GATE_APPROVER_IDS cannot widen the pinned gate approver", async () => {
+  assert.deepEqual(gateApproverIds({ FACTORY_GATE_APPROVER_IDS: "U0OTHER" }), [ANAK]);
+  const harness = openHarness();
+  const result = await handleGateClick(click(harness, {
+    actor: { id: "U0OTHER", isBot: false, teamId: "T0TEAM" },
+    allowedUserIds: [ANAK, "U0OTHER"],
+    env: { SLACK_SIGNING_SECRET: SECRET, FACTORY_GATE_APPROVER_IDS: "U0OTHER" },
+  }));
+  assert.equal(result.reason, "user is not a gate approver");
+  assert.equal(harness.state.merges.length, 0);
+  assert.equal(harness.calls.some((call) => call.method === "PUT" || call.method === "POST"), false);
 });
 
 test("Slack signatures accept the fixture and reject a bad, missing, or stale signature", async () => {
@@ -138,10 +152,6 @@ test("onInteraction ignores eve controls, bots, and non-allowlisted people or ch
   assert.equal((await handleGateClick(click(harness, { actor: { id: ANAK, isBot: true, teamId: "T0TEAM" } }))).reason, "bot click");
   assert.equal((await handleGateClick(click(harness, { channelId: "COTHER" }))).reason, "channel is not on the allowlist");
   assert.equal((await handleGateClick(click(harness, { allowedUserIds: [] }))).reason, "fail-closed: factory allowlist is empty");
-  assert.match(
-    (await handleGateClick(click(harness, { env: { SLACK_SIGNING_SECRET: SECRET, FACTORY_GATE_APPROVER_IDS: "," } }))).reason,
-    /fail-closed/,
-  );
   assert.equal(actorFromUsersInfo(ANAK, { ok: true, user: { is_bot: true } }).actor.isBot, true);
   assert.equal(actorFromUsersInfo(ANAK, { ok: false }).ok, false);
   assert.equal(harness.calls.some((call) => call.method === "POST" || call.method === "PUT"), false);

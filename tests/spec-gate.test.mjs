@@ -142,15 +142,80 @@ test("valid new-format SRS passes", () => {
   );
 });
 
-test("SRS PR refused without approved projectPlan", () => {
-  const gate = assessPhase3Gate({ project, torText: tor });
+test("SRS PR refused without approved projectPlan", async () => {
+  const gate = await assessPhase3Gate({ project, torText: tor });
   assert.equal(gate.ok, false);
   assert.equal(gate.reason, "projectPlan-not-approved");
 });
 
-test("SRS PR refused while plan paused by hash mismatch", () => {
+test("SRS is refused without an approved plan even when a route-approval is approved, while the skip constant is false", async () => {
+  const { PLAN_CHECK_SKIP_FOR_APPROVED_ROUTE } = await import("../lib/plan-check-skip.mjs");
+  assert.equal(PLAN_CHECK_SKIP_FOR_APPROVED_ROUTE, false);
+  const gate = await assessPhase3Gate({
+    project,
+    torText: tor,
+    routeApproval: {
+      client: { request() { return Promise.resolve(null); } },
+      action: {
+        requestId: "iso-route-1",
+        key: "route",
+        kind: "route-approval",
+        title: "Route approval: Demo",
+        statement: "Approve the route.",
+        target: {
+          project: { id: "a".repeat(32), title: "Demo" },
+          steps: [{ id: "tor", title: "Terms" }, { id: "srs", title: "Requirements" }],
+          stepsSha256: "ab".repeat(32),
+          cardExpiresAt: "2026-11-28T20:00:00.000+07:00",
+        },
+      },
+    },
+  });
+  assert.equal(gate.ok, false);
+  assert.equal(gate.reason, "projectPlan-not-approved");
+});
+
+test("while the shipped constant is false the skip hook never runs, even for a matching project and a valid-looking route", async () => {
+  let calls = 0;
+  const client = {
+    request() {
+      calls += 1;
+      throw new Error("the skip hook must not call GitHub while the constant is false");
+    },
+  };
+  const gate = await assessPhase3Gate({
+    project: { ...project, notionPageId: "a".repeat(32) },
+    torText: tor,
+    routeApproval: {
+      client,
+      action: {
+        requestId: "iso-route-1",
+        key: "route",
+        kind: "route-approval",
+        title: "Route approval: Demo",
+        statement: "Approve the route.",
+        target: {
+          project: { id: "a".repeat(32), title: "Demo" },
+          steps: [{ id: "tor", title: "Terms" }, { id: "srs", title: "Requirements" }],
+          stepsSha256: "ab".repeat(32),
+          cardExpiresAt: "2026-11-28T20:00:00.000+07:00",
+        },
+      },
+    },
+  });
+  assert.equal(gate.ok, false);
+  assert.equal(gate.reason, "projectPlan-not-approved");
+  assert.equal(calls, 0);
+});
+
+test("PLAN_CHECK_SKIP_FOR_APPROVED_ROUTE ships false", async () => {
+  const shipped = await import("../lib/plan-check-skip.mjs");
+  assert.equal(shipped.PLAN_CHECK_SKIP_FOR_APPROVED_ROUTE, false);
+});
+
+test("SRS PR refused while plan paused by hash mismatch", async () => {
   const approved = parseSimpleYaml(withPlan(render(project)));
-  const gate = assessPhase3Gate({ project: approved, torText: tor, planPaused: true });
+  const gate = await assessPhase3Gate({ project: approved, torText: tor, planPaused: true });
   assert.equal(gate.reason, "projectPlan-paused");
 });
 
@@ -191,10 +256,10 @@ test("new agreed plan version flags an existing SRS for review", () => {
   assert.equal(notice.blocks.some((block) => block.type === "actions"), false);
 });
 
-test("SRS tools refuse while srs.status is needs-review", () => {
+test("SRS tools refuse while srs.status is needs-review", async () => {
   const approved = parseSimpleYaml(withPlan(render(project)));
   approved.srs = { status: "needs-review" };
-  const gate = assessPhase3Gate({ project: approved, torText: tor });
+  const gate = await assessPhase3Gate({ project: approved, torText: tor });
   assert.equal(gate.reason, "srs-needs-review");
 });
 

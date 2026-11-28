@@ -4,6 +4,7 @@ import { specificationConfig } from "../../../../generated/config.js";
 import { createSlackGate } from "../../../../lib/slack-gate.js";
 import { rememberPhaseSession } from "../../../../lib/gate-chain.mjs";
 import { deliverAnsweredPhase, deliverPhaseOutput, dispatchSpecificationInbound, handleSpecificationInbound, loadOrchestratorProject, phaseSessionFromThread, projectIdFromSlackText, projectIdFromThread } from "../../../../lib/orchestrator.mjs";
+import { createApprovalHandlers } from "../../../../lib/owner-approval.mjs";
 import { phaseAnswerFromAction } from "../../../../lib/phase-actor.mjs";
 import { continuePhaseSession, readPhaseReply, startPhaseAgent } from "../../../../lib/phase-hop.mjs";
 import { createGateGithubClient } from "../lib/github-token.js";
@@ -31,11 +32,19 @@ const gate = createSlackGate({
   createClient: () => createGateGithubClient(),
 });
 
+const approvals = createApprovalHandlers({
+  createClient: () => createGateGithubClient(),
+});
+
 export default slackChannel({
   credentials: process.env.SLACK_CONNECTOR
     ? connectSlackCredentials(process.env.SLACK_CONNECTOR)
     : undefined,
   onInteraction: async (action, ctx) => {
+    if (action.actionId.startsWith("iso-approval:")) {
+      await approvals.onInteraction(action, ctx);
+      return;
+    }
     const answer = phaseAnswerFromAction(action);
     if (answer) {
       if (!allowUser(action.user.id) || !allowChannel(ctx.slack.channelId)) return;
@@ -70,6 +79,7 @@ export default slackChannel({
     if (message.raw.channel_type === "im") return null;
     if (!allowUser(message.author.userId) || !allowChannel(message.channelId)) return null;
     if (await gate.consumeReasonReply(ctx, message)) return null;
+    if (await approvals.onMessage(message, ctx)) return null;
     if (specificationConfig.status !== "approved") return null;
     const auth = defaultSlackAuth(message, ctx);
     if (!auth) return null;

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { parseSimpleYaml } from "../../../../lib/project-yaml.mjs";
 import { assessPhase3Gate, sha256, validateSrs } from "../../../../lib/srs-validate.mjs";
 import { assessWrite, SPECIFICATION_DOCS } from "../../../../lib/write-policy.mjs";
+import { githubClientFromContext } from "../lib/github-token.js";
 
 async function readOptional(
   sandbox: { readTextFile: (input: { path: string }) => PromiseLike<string | null> },
@@ -21,8 +22,18 @@ export default defineTool({
   inputSchema: z.object({
     projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     changedPaths: z.array(z.string()).optional(),
+    routeApproval: z.object({
+      action: z.object({
+        requestId: z.string(),
+        key: z.string(),
+        kind: z.string(),
+        title: z.string(),
+        statement: z.string(),
+        target: z.unknown(),
+      }),
+    }).optional(),
   }),
-  async execute({ projectId, changedPaths }, ctx) {
+  async execute({ projectId, changedPaths, routeApproval }, ctx) {
     const sandbox = await ctx.getSandbox();
     const root = `projects/${projectId}`;
     const projectYaml = await sandbox.readTextFile({ path: `${root}/project.yaml` });
@@ -34,7 +45,12 @@ export default defineTool({
     const planText = await readOptional(sandbox, planPath);
     const planSha = project.projectPlan?.baseline?.sha256;
     const planPaused = typeof planSha === "string" && planSha.length > 0 && sha256(planText) !== planSha;
-    const baseline = assessPhase3Gate({ project, torText, planPaused });
+    const baseline = await assessPhase3Gate({
+      project,
+      torText,
+      planPaused,
+      ...(routeApproval ? { routeApproval: { client: await githubClientFromContext(ctx), action: routeApproval.action } } : {}),
+    });
     if (!baseline.ok || !baseline.sha256) {
       return {
         ok: false,
