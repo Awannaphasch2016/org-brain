@@ -5,7 +5,31 @@ export function assessPhase3Gate(input: {
   project: Record<string, any> | null | undefined;
   torText?: string;
   planPaused?: boolean;
-}): { ok: boolean; reason?: string; sha256?: string; mergeCommit?: string; sourcePlanCommit?: string; sourcePlanSha256?: string | null };
+  routeApproval?: {
+    client: {
+      owner: string;
+      repo: string;
+      identity: { kind: string; botLogin: string; label?: string } | null;
+      request(method: string, apiPath: string, init?: { body?: unknown; allowNotFound?: boolean }): Promise<any>;
+    };
+    action: {
+      requestId: string;
+      key: string;
+      kind: string;
+      title: string;
+      statement: string;
+      target: unknown;
+    };
+  };
+}): Promise<{
+  ok: boolean;
+  reason?: string;
+  sha256?: string;
+  mergeCommit?: string;
+  sourcePlanCommit?: string | null;
+  sourcePlanSha256?: string | null;
+  planCheckSkipped?: boolean;
+}>;
 
 export function assessSrsGate(input: {
   project: Record<string, any> | null | undefined;

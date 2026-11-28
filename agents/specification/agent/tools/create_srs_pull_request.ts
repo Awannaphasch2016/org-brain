@@ -29,8 +29,18 @@ export default defineTool({
     title: z.string().optional(),
     summaryOfDecisions: z.string().min(1),
     supersededPullNumber: z.number().int().positive().optional(),
+    routeApproval: z.object({
+      action: z.object({
+        requestId: z.string(),
+        key: z.string(),
+        kind: z.string(),
+        title: z.string(),
+        statement: z.string(),
+        target: z.unknown(),
+      }),
+    }).optional(),
   }),
-  async execute({ projectId, title, summaryOfDecisions, supersededPullNumber }, ctx) {
+  async execute({ projectId, title, summaryOfDecisions, supersededPullNumber, routeApproval }, ctx) {
     const sandbox = await ctx.getSandbox();
     const root = `projects/${projectId}`;
     const projectYaml = await sandbox.readTextFile({ path: `${root}/project.yaml` });
@@ -42,7 +52,12 @@ export default defineTool({
     const planText = await readOptional(sandbox, planPath);
     const planSha = project.projectPlan?.baseline?.sha256;
     const planPaused = typeof planSha === "string" && planSha.length > 0 && sha256(planText) !== planSha;
-    const baseline = assessPhase3Gate({ project, torText: torText ?? "", planPaused });
+    const baseline = await assessPhase3Gate({
+      project,
+      torText: torText ?? "",
+      planPaused,
+      ...(routeApproval ? { routeApproval: { client: await githubClientFromContext(ctx), action: routeApproval.action } } : {}),
+    });
     if (!baseline.ok || !baseline.sha256) {
       throw new Error(`SRS is blocked until the approved project plan and TOR hash match: ${baseline.reason ?? "projectPlan-not-approved"}`);
     }
@@ -113,6 +128,8 @@ export default defineTool({
         card as { text: string; blocks?: readonly Record<string, unknown>[] },
       );
     }
-    return { ...opened, card };
+    return baseline.planCheckSkipped
+      ? { ...opened, card, sourcePlanCommit: null, sourcePlanSha256: null }
+      : { ...opened, card };
   },
 });

@@ -11,8 +11,18 @@ export default defineTool({
     "Authorize the current Slack user, then load one project's files from the approved TOR baseline. Stops when the project uses the retired TOR format or docs/tor.md does not match tor.baseline.sha256.",
   inputSchema: z.object({
     projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+    routeApproval: z.object({
+      action: z.object({
+        requestId: z.string(),
+        key: z.string(),
+        kind: z.string(),
+        title: z.string(),
+        statement: z.string(),
+        target: z.unknown(),
+      }),
+    }).optional(),
   }),
-  async execute({ projectId }, ctx) {
+  async execute({ projectId, routeApproval }, ctx) {
     const client = await githubClientFromContext(ctx);
     const loaded = await loadApprovedTor(client, {
       projectId,
@@ -33,10 +43,11 @@ export default defineTool({
       userId: slackUserIdFromAuth(ctx.session.auth.current),
       allowedUserIds: specificationConfig.allowedUserIds,
     });
-    const phase = assessPhase3Gate({
+    const phase = await assessPhase3Gate({
       project: loaded.project,
       torText: loaded.documentText ?? "",
       planPaused: plan.paused === true,
+      ...(routeApproval ? { routeApproval: { client, action: routeApproval.action } } : {}),
     });
     if (!phase.ok) {
       return { denied: false, fetch: false, stop: true, projectId, reason: phase.reason };

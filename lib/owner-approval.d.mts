@@ -19,6 +19,14 @@ export function formatIct(input: Date | number | string): string;
 export function approvalRouteMode(env?: NodeJS.ProcessEnv): { ok: true } | { ok: false; reason: string };
 export function authenticatedAppBotLogin(identity: { kind?: string; botLogin?: string } | null | undefined): string | null;
 export function assertAppIdentity(identity: { kind?: string; botLogin?: string } | null | undefined): { ok: true } | { ok: false; reason: string };
+export function stepsCanonical(steps: readonly { id: string; title: string }[]): Array<{ id: string; title: string }>;
+export function routeApprovalTitle(project: { title: string }): string;
+export function routeApprovalStatement(target: {
+  project: { id: string; title: string; url?: string };
+  steps: readonly { id: string; title: string }[];
+}): string;
+export function routeApprovalCardExpiresAt(filedAt: Date | number | string): string;
+export function routeApprovalCardExpiryAllowed(filedAt: Date | number | string, cardExpiresAt: string): boolean;
 export function actionHash(action: {
   requestId: string;
   key: string;
@@ -47,7 +55,8 @@ export function renderApprovalCard(action: {
   title: string;
   statement: string;
   actionHash: string;
-  target: { options?: readonly string[] };
+  target: { options?: readonly string[]; project?: { title?: string; id?: string; url?: string }; steps?: readonly { id: string; title: string }[]; stepsSha256?: string; cardExpiresAt?: string };
+  requester?: { agentId?: string };
 }): { text: string; blocks: readonly Record<string, unknown>[] };
 export function renderDecidedCard(record: {
   decision: string;
@@ -120,6 +129,7 @@ export function deliverApprovalRequest(input: {
   threadTs: string;
   client: ApprovalClient;
   slack?: ApprovalSlack;
+  requester?: { agentId: string; identityPath: string };
 }): Promise<Record<string, unknown>>;
 
 export function fileApprovalRequest(input: {
@@ -128,6 +138,7 @@ export function fileApprovalRequest(input: {
   threadTs: string;
   client: ApprovalClient;
   slack?: ApprovalSlack;
+  requester?: { agentId: string; identityPath: string };
 }): Promise<Record<string, unknown>>;
 
 export function createApprovalHandlers(input?: {

@@ -45,9 +45,14 @@ const {
   parseApprovalRequestMention,
   renderApprovalCard,
   renderDecidedCard,
+  routeApprovalCardExpiresAt,
+  routeApprovalCardExpiryAllowed,
+  routeApprovalStatement,
+  routeApprovalTitle,
   runDeclarationSha256,
   sha256Hex,
   shaReachableFromMain,
+  stepsCanonical,
   validateRequest,
   verifyApproval,
   appCommitListOk,
@@ -1665,4 +1670,316 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
   assert.equal(canonicalText.includes("https://app.notion.com/p/4239a2439a1d8128989dd9b2c0e5faa2"), true);
   assert.equal(sha256Hex(canonical), "2fdbd08d6e9fadeea6350fe4c9a4be9fa25d4316668b69b4af39f939aa78de5c");
   assert.equal(sha256Hex(personas), "9439885d4760c0ee5ec1719b1b0bbcd040226c17b8c4e2f99e21d6f64da3be4a");
+});
+
+const ROUTE_PROJECT = "a".repeat(32);
+const ROUTE_STEPS = [
+  ["tor", "Terms"],
+  ["srs", "Requirements"],
+];
+
+function routeSteps(pairs) {
+  return pairs.map(([id, title]) => ({ id, title }));
+}
+
+function routeTarget(pairs, extra = {}) {
+  const steps = routeSteps(pairs);
+  const project = { id: extra.projectId ?? ROUTE_PROJECT, title: extra.projectTitle ?? "Demo" };
+  if (extra.url) project.url = extra.url;
+  const target = {
+    project,
+    steps,
+    stepsSha256: extra.stepsSha256 ?? sha256Hex(jcs(stepsCanonical(steps))),
+    cardExpiresAt: extra.cardExpiresAt ?? routeApprovalCardExpiresAt(NOW),
+  };
+  if (extra.supersedes) target.supersedes = extra.supersedes;
+  return target;
+}
+
+function routeAction(pairs, extra = {}) {
+  const target = routeTarget(pairs, extra);
+  return {
+    key: extra.key ?? "route",
+    kind: "route-approval",
+    title: extra.title ?? routeApprovalTitle(target.project),
+    statement: extra.statement ?? routeApprovalStatement(target),
+    target,
+  };
+}
+
+function storeRoute(github, request) {
+  storeText(github, REQUESTS_BRANCH, `approvals/requests/${request.requestId}.json`, `${JSON.stringify(request)}\n`);
+}
+
+async function fileRoute(github, slack, request, now = NOW, requester) {
+  storeRoute(github, request);
+  return fileApprovalRequest({
+    requestId: request.requestId,
+    threadChannel: THREAD,
+    threadTs: THREAD_PARENT,
+    client: github.client,
+    slack,
+    env: ENV,
+    now,
+    requester,
+  });
+}
+
+async function clickRoute(github, slack, request, now = NOW, overrides = {}) {
+  const pending = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/${request.requestId}.json`));
+  const central = pending.actions[request.actions[0].key].cardRefs.find((ref) => ref.surface === "central");
+  const button = renderApprovalCard({ ...request.actions[0], requestId: request.requestId }).blocks
+    .find((block) => block.type === "actions").elements[overrides.element ?? 0];
+  return handleApprovalClick(click(
+    { github, slack, request },
+    button,
+    { channelId: central.channel, messageTs: central.ts, threadTs: central.threadTs, now, ...overrides },
+  ));
+}
+
+test("route-approval binds stepsSha256 over the filed order and rejects unknown step ids", () => {
+  const request = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-1"));
+  const action = { ...request.actions[0], requestId: "iso-route-1" };
+  assert.equal(action.target.stepsSha256, sha256Hex(jcs(stepsCanonical(action.target.steps))));
+  assert.equal(action.actionHash, sha256Hex(jcs({
+    requestId: action.requestId,
+    key: action.key,
+    kind: action.kind,
+    title: action.title,
+    statement: action.statement,
+    target: action.target,
+  })));
+  const withUrl = validateRequest(requestDocument(routeAction(ROUTE_STEPS, { url: "https://app.notion.com/p/demo" }), "iso-route-url"));
+  assert.notEqual(withUrl.actions[0].actionHash, request.actions[0].actionHash);
+  validateRequest(requestDocument(routeAction(ROUTE_STEPS, { projectId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }), "iso-route-uuid"));
+  for (const broken of [
+    routeAction([["merge-deploy", "Ship"]]),
+    routeAction([["tor", "Terms"], ["tor", "Again"]]),
+    routeAction([]),
+    routeAction(Array.from({ length: 33 }, () => ["tor", "Terms"])),
+    routeAction(ROUTE_STEPS, { projectId: "demo" }),
+    routeAction(ROUTE_STEPS, { stepsSha256: "ab".repeat(32) }),
+    routeAction(ROUTE_STEPS, { url: "http://example.test" }),
+  ]) {
+    assert.throws(() => validateRequest(requestDocument(broken, "iso-route-bad")), /invalid/);
+  }
+});
+
+test("route-approval title and statement must be the canonical text", () => {
+  const driftedTitle = routeAction(ROUTE_STEPS, { title: "Route approval: Other" });
+  const driftedStatement = routeAction(ROUTE_STEPS, { statement: "Approve something else." });
+  assert.throws(() => validateRequest(requestDocument(driftedTitle, "iso-route-title")), /invalid request/);
+  assert.throws(() => validateRequest(requestDocument(driftedStatement, "iso-route-statement")), /invalid request/);
+});
+
+test("route-approval cards post on both surfaces with Approve, Reject, and Refresh", async () => {
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const request = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-card"));
+  const filed = await fileRoute(github, slack, request, NOW, { agentId: "spec-writer", identityPath: "agent:spec-writer" });
+  assert.equal(filed.status, "filed");
+  const posts = slack.calls.filter((call) => call.method === "chat.postMessage" && !String(call.body.text).startsWith("approval record"));
+  assert.equal(posts.some((call) => call.body.channel === APPROVAL_CHANNEL_ID), true);
+  assert.equal(posts.some((call) => call.body.channel === THREAD), true);
+  const card = posts[0].body;
+  const elements = card.blocks.find((block) => block.type === "actions").elements;
+  assert.deepEqual(elements.map((element) => element.text.text), ["Approve", "Reject", "Refresh"]);
+  assert.equal(elements.some((element) => /approve all/i.test(element.text.text)), false);
+  for (const element of elements) {
+    assert.deepEqual(Object.keys(JSON.parse(element.value)).sort(), ["actionHash", "decision", "key", "requestId"]);
+  }
+  const text = card.blocks.map((block) => block.text?.text ?? "").join("\n");
+  assert.match(text, /Project: Demo/);
+  assert.ok(text.indexOf("1. Terms") < text.indexOf("2. Requirements"));
+  assert.match(text, /does not approve a merge, a deploy/);
+  assert.match(text, /Requested by: `spec-writer`/);
+  const pending = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/iso-route-card.json`));
+  assert.deepEqual(pending.requester, { agentId: "spec-writer", identityPath: "agent:spec-writer" });
+});
+
+test("route-approval button values stay under 1900 characters for a 32-step list", () => {
+  const ids = ["tor", "plan", "srs", "implementation", "verification"];
+  const pairs = Array.from({ length: 32 }, (_, index) => [ids[index % ids.length], `Step ${index + 1}`]);
+  const steps = routeSteps(pairs);
+  const target = {
+    project: { id: ROUTE_PROJECT, title: "Demo" },
+    steps,
+    stepsSha256: sha256Hex(jcs(stepsCanonical(steps))),
+    cardExpiresAt: routeApprovalCardExpiresAt(NOW),
+  };
+  const action = {
+    requestId: "iso-route-32",
+    key: "route",
+    kind: "route-approval",
+    title: routeApprovalTitle(target.project),
+    statement: routeApprovalStatement(target),
+    actionHash: "ab".repeat(32),
+    target,
+  };
+  const elements = renderApprovalCard(action).blocks.find((block) => block.type === "actions").elements;
+  assert.equal(elements.every((element) => element.value.length <= 1900), true);
+  const unique = validateRequest(requestDocument(routeAction(ids.map((id) => [id, id])), "iso-route-five"));
+  assert.equal(unique.actions[0].target.steps.length, 5);
+  assert.throws(() => validateRequest(requestDocument(routeAction(pairs), "iso-route-32")), /route-approval target is invalid/);
+});
+
+test("a route-approval click after cardExpiresAt writes no record", async () => {
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const request = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-expire"));
+  assert.equal((await fileRoute(github, slack, request)).status, "filed");
+  const clicked = await clickRoute(github, slack, request, new Date(NOW.getTime() + 73 * 60 * 60 * 1000));
+  assert.equal(clicked.recorded, false);
+  assert.equal(clicked.reason, "EXPIRED");
+  assert.equal(github.state.files.has(`${RECORDS_BRANCH}:approvals/records/iso-route-expire/route.json`), false);
+  assert.equal(slack.calls.some((call) => call.method === "chat.update" && call.body.text === "EXPIRED: no decision recorded"), true);
+});
+
+test("verifyApproval accepts a route-approval decided in time after the card expires", async () => {
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const request = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-live"));
+  assert.equal((await fileRoute(github, slack, request)).status, "filed");
+  const clicked = await clickRoute(github, slack, request, new Date(NOW.getTime() + 60 * 60 * 1000));
+  assert.equal(clicked.recorded, true);
+  testClock.now = new Date(NOW.getTime() + 80 * 60 * 60 * 1000);
+  const action = { ...request.actions[0], requestId: request.requestId };
+  assert.equal((await verifyApproval({ client: github.client, action })).ok, true);
+  const path = "approvals/records/iso-route-live/route.json";
+  const tampered = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:${path}`));
+  tampered.decidedAt = formatIct(new Date(Date.parse(action.target.cardExpiresAt) + 60 * 1000));
+  tampered.cardAttestation.blocksSha256 = sha256Hex(jcs(renderDecidedCard(tampered).blocks));
+  storeText(github, RECORDS_BRANCH, path, `${JSON.stringify(tampered)}\n`);
+  assert.equal((await verifyApproval({ client: github.client, action })).reason, "route decision is expired");
+});
+
+test("verifyApproval refuses a subset, a superset, or a reordering of an approved route", async () => {
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const request = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-order"));
+  assert.equal((await fileRoute(github, slack, request)).status, "filed");
+  assert.equal((await clickRoute(github, slack, request)).recorded, true);
+  const base = { ...request.actions[0], requestId: request.requestId };
+  assert.equal((await verifyApproval({ client: github.client, action: base })).ok, true);
+  const variants = [
+    routeAction([["tor", "Terms"]]),
+    routeAction([["tor", "Terms"], ["srs", "Requirements"], ["plan", "Plan"]]),
+    routeAction([["srs", "Requirements"], ["tor", "Terms"]]),
+    routeAction(ROUTE_STEPS, { projectId: "b".repeat(32) }),
+    routeAction([["tor", "Terms renamed"], ["srs", "Requirements"]]),
+  ];
+  for (const variant of variants) {
+    const requestId = "iso-route-order";
+    const changed = validateRequest(requestDocument(variant, requestId)).actions[0];
+    const result = await verifyApproval({ client: github.client, action: { ...changed, requestId } });
+    assert.equal(result.ok, false);
+  }
+});
+
+test("a planted route-approval record, or one not posted by the bot or not clicked by U0CFRUV378D, fails verifyApproval", async () => {
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const request = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-plant"));
+  assert.equal((await fileRoute(github, slack, request)).status, "filed");
+  const action = { ...request.actions[0], requestId: request.requestId };
+  const pending = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/iso-route-plant.json`));
+  const forged = {
+    requestId: action.requestId,
+    key: action.key,
+    actionHash: action.actionHash,
+    decision: "approve",
+    decidedBy: APPROVER,
+    clickedCardTs: CENTRAL_TS,
+    decidedAt: ICT,
+    cardAttestation: {
+      channel: APPROVAL_CHANNEL_ID,
+      ts: pending.actions.route.cardRefs[0].ts,
+      user: "U0OTHER",
+      bot_id: "B0OTHER",
+      app_id: SLACK_APP,
+      blocksSha256: "ab".repeat(32),
+    },
+  };
+  storeText(github, RECORDS_BRANCH, "approvals/records/iso-route-plant/route.json", `${JSON.stringify(forged)}\n`);
+  assert.equal((await verifyApproval({ client: github.client, action })).ok, false);
+  github.state.files.delete(`${RECORDS_BRANCH}:approvals/records/iso-route-plant/route.json`);
+  const stranger = await clickRoute(github, slack, request, NOW, { userId: "U0OTHER" });
+  assert.equal(stranger.recorded, false);
+  assert.equal((await verifyApproval({ client: github.client, action })).ok, false);
+  const quiet = slackDouble();
+  const second = approvalGithub();
+  const again = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-quiet"));
+  storeRoute(second, again);
+  const posted = await fileRoute(second, quiet, again);
+  assert.equal(posted.status, "filed");
+  quiet.messages.forEach((message) => {
+    message.user = "U0OTHER";
+    message.bot_id = undefined;
+    message.app_id = undefined;
+  });
+  const refused = await clickRoute(second, quiet, again);
+  assert.equal(refused.recorded, false);
+  assert.equal((await verifyApproval({ client: second.client, action: { ...again.actions[0], requestId: again.requestId } })).ok, false);
+});
+
+test("an expired route-approval with no decision may be superseded once", async () => {
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const short = formatIct(new Date(NOW.getTime() + 60 * 60 * 1000));
+  const first = validateRequest(requestDocument(routeAction(ROUTE_STEPS, { cardExpiresAt: short }), "iso-route-lock-1"));
+  assert.equal((await fileRoute(github, slack, first, NOW)).status, "filed");
+  const live = validateRequest(requestDocument(routeAction(ROUTE_STEPS, {
+    cardExpiresAt: formatIct(new Date(NOW.getTime() + 2 * 60 * 60 * 1000)),
+    supersedes: "iso-route-lock-1",
+  }), "iso-route-lock-live"));
+  assert.equal((await fileRoute(github, slack, live, new Date(NOW.getTime() + 30 * 60 * 1000))).reason, "route card is already filed");
+  const late = new Date(NOW.getTime() + 2 * 60 * 60 * 1000);
+  const second = validateRequest(requestDocument(routeAction(ROUTE_STEPS, {
+    cardExpiresAt: formatIct(new Date(late.getTime() + 60 * 60 * 1000)),
+    supersedes: "iso-route-lock-1",
+  }), "iso-route-lock-2"));
+  assert.equal((await fileRoute(github, slack, second, late)).status, "filed");
+  const third = validateRequest(requestDocument(routeAction(ROUTE_STEPS, {
+    cardExpiresAt: formatIct(new Date(late.getTime() + 2 * 60 * 60 * 1000)),
+    supersedes: "iso-route-lock-2",
+  }), "iso-route-lock-3"));
+  assert.equal((await fileRoute(github, slack, third, new Date(late.getTime() + 30 * 60 * 1000))).reason, "route card cannot be filed again");
+  assert.equal((await clickRoute(github, slack, second, late)).recorded, true);
+  const after = validateRequest(requestDocument(routeAction(ROUTE_STEPS, {
+    cardExpiresAt: formatIct(new Date(late.getTime() + 3 * 60 * 60 * 1000)),
+    supersedes: "iso-route-lock-2",
+  }), "iso-route-lock-4"));
+  assert.equal((await fileRoute(github, slack, after, new Date(late.getTime() + 40 * 60 * 1000))).reason, "route already has a decision");
+  const lockPath = `${RECORDS_BRANCH}:approvals/route-locks/${ROUTE_PROJECT}/${second.actions[0].target.stepsSha256}.json`;
+  assert.equal(JSON.parse(github.state.files.get(lockPath)).supersedes, "iso-route-lock-1");
+});
+
+test("SRS is refused without an approved plan even when a route-approval is approved, while the skip constant is false", async () => {
+  const { assessPhase3Gate, sha256 } = await import("../lib/srs-validate.mjs");
+  const { PLAN_CHECK_SKIP_FOR_APPROVED_ROUTE } = await import("../lib/plan-check-skip.mjs");
+  assert.equal(PLAN_CHECK_SKIP_FOR_APPROVED_ROUTE, false);
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const request = validateRequest(requestDocument(routeAction(ROUTE_STEPS), "iso-route-skip-off"));
+  assert.equal((await fileRoute(github, slack, request)).status, "filed");
+  assert.equal((await clickRoute(github, slack, request)).recorded, true);
+  const torText = "IS-001 keep a reviewed requirements document\n";
+  const gate = await assessPhase3Gate({
+    project: {
+      tor: {
+        status: "approved",
+        path: "docs/tor.md",
+        baseline: {
+          mergeCommit: "b".repeat(40),
+          approvedAt: "2026-11-14T08:00:00.000Z",
+          approvedBy: "slack:T0TEAM:U0CFRUV378D",
+          sha256: sha256(torText),
+        },
+      },
+    },
+    torText,
+    routeApproval: { client: github.client, action: { ...request.actions[0], requestId: request.requestId } },
+  });
+  assert.equal(gate.ok, false);
+  assert.equal(gate.reason, "projectPlan-not-approved");
 });
