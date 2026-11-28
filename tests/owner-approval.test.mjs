@@ -1663,6 +1663,6 @@ test("docs/iso v1.1 files keep the byte rules and the unfilled placeholders", as
   assert.equal(canonicalText.includes("<approvalRowUrl>"), false);
   assert.equal(canonicalText.includes("C0CLPUMNYUD"), true);
   assert.equal(canonicalText.includes("https://app.notion.com/p/4239a2439a1d8128989dd9b2c0e5faa2"), true);
-  assert.equal(sha256Hex(canonical), "f30570b64c180d8ad96093ad78e400a99afb8200fb8703aef530b7829184fb8a");
-  assert.equal(sha256Hex(personas), "d5a79b0cdbc86c83bd2ef8e6b8bf791e5b5137e84616a3a23cad93c2f29691bd");
+  assert.equal(sha256Hex(canonical), "a1d9410007aecbb6a6515786706ba2f484fd22a1b0bac3b1e2b061015417e0d8");
+  assert.equal(sha256Hex(personas), "5657fbf8459d1beb8bada5cff456e10eb157ec3fbb8f7e5d214b5a8a2e60f356");
 });
