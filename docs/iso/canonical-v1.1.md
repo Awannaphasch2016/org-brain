@@ -63,7 +63,7 @@ Bot Father builds and changes the approval route. Coding Agent and ISO Workflow 
 
 ## Route status and INTERIM RULE
 
-The approval route is live only from the time the changelog of this page records "route live", with the record commit SHA and card ts of Anak's Approve on the re-confirmation card. Until then the INTERIM RULE applies: Coding Agent is BLOCKED on every Yes-Needed action (merge, deploy, production, secrets, external sends, spending and deletes). There's no ✅-reaction fallback. Approvals in chat, on a PR or by relay never count. The #56–#68 merge was merged on 2026-11-23 outside this route.
+The approval route is live only from the time the changelog of this page records "route live", with the record commit SHA and card ts of Anak's Approve on the re-confirmation card. Until then the INTERIM RULE applies: Coding Agent is BLOCKED on every Yes-Needed action (merge, deploy, production, secrets, external sends, spending and deletes). There's no ✅-reaction fallback. Approvals in chat, on a PR or by relay never count. PRs #56–#57 and #59–#68 were merged on 2026-11-23 outside this route (#58 has no pull request in this repo).
 
 ## One-time bootstrap exception
 

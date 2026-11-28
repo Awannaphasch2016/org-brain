@@ -30,7 +30,7 @@ Approval route work: Bot Father builds and changes the approval route; you don't
 
 - Replace "INTERIM BLOCK" with:
 
-INTERIM BLOCK: until the canonical page's changelog records "route live", you are BLOCKED on every Yes-Needed action: merge, deploy, production, secrets, external sends, spending and deletes. There's no ✅-reaction fallback, and the one-time bootstrap exception doesn't cover you. The #56–#68 merge was merged on 2026-11-23 outside this route.
+INTERIM BLOCK: until the canonical page's changelog records "route live", you are BLOCKED on every Yes-Needed action: merge, deploy, production, secrets, external sends, spending and deletes. There's no ✅-reaction fallback, and the one-time bootstrap exception doesn't cover you. PRs #56–#57 and #59–#68 were merged on 2026-11-23 outside this route (#58 has no pull request in this repo).
 
 - Replace hard rule 1 with S2. Replace hard rule 7 with S3.
 
