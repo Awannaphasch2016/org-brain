@@ -18,7 +18,6 @@ mock.module(new URL("../lib/plan-check-skip.mjs", import.meta.url).href, {
 
 const { branchRuleTypes, filledRulesetTemplates } = await import("../lib/ruleset-spec.mjs");
 const {
-  APPROVAL_CHANNEL_ID,
   APPROVER_SLACK_ID,
   BOT_USER_ID,
   ISO_WORKFLOWS_BOT_ID,
@@ -26,7 +25,6 @@ const {
   REQUESTS_BRANCH,
   THREAD_SURFACE_CHANNELS,
   fileApprovalRequest: fileApprovalRequestRaw,
-  formatIct,
   handleApprovalClick: handleApprovalClickRaw,
   jcs,
   renderApprovalCard,
@@ -37,7 +35,7 @@ const {
   stepsCanonical,
   validateRequest,
 } = await import("../lib/owner-approval.mjs");
-const { assessPhase3Gate, sha256 } = await import("../lib/srs-validate.mjs");
+const { assessPhase3Gate, assessRouteSkip, sha256 } = await import("../lib/srs-validate.mjs");
 
 const SLACK_APP = testPins.slackAppId;
 const BOT = BOT_USER_ID;
@@ -46,6 +44,7 @@ const ENV = { SLACK_SIGNING_SECRET: "test-signing-secret" };
 const THREAD = THREAD_SURFACE_CHANNELS[0];
 const THREAD_PARENT = "1700000000.000050";
 const PROJECT = "a".repeat(32);
+const DASHED = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 function applyClock(input) {
   testClock.now = input?.now instanceof Date ? input.now : NOW;
@@ -210,10 +209,10 @@ function routeRequest(pairs, requestId, extra = {}) {
   return validateRequest({ schema: "iso-approval-request/1", requestId, actions: [action] });
 }
 
-async function approve(pairs, requestId) {
+async function approve(pairs, requestId, extra = {}) {
   const github = approvalGithub();
   const slack = slackDouble();
-  const request = routeRequest(pairs, requestId);
+  const request = routeRequest(pairs, requestId, extra);
   applyClock({ now: NOW });
   github.state.files.set(`${REQUESTS_BRANCH}:approvals/requests/${requestId}.json`, `${JSON.stringify(request)}\n`);
   const blob = sha1(`${JSON.stringify(request)}\n`);
@@ -248,7 +247,8 @@ async function approve(pairs, requestId) {
 }
 
 function projectFor(torText, extra = {}) {
-  return {
+  const project = {
+    notionPageId: PROJECT,
     tor: {
       status: "approved",
       path: "docs/tor.md",
@@ -259,68 +259,295 @@ function projectFor(torText, extra = {}) {
         sha256: sha256(torText),
       },
     },
-    ...extra,
+  };
+  for (const key of Object.keys(extra)) {
+    if (extra[key] === undefined) delete project[key];
+    else project[key] = extra[key];
+  }
+  return project;
+}
+
+function countingClient(client) {
+  const calls = [];
+  return {
+    calls,
+    client: {
+      owner: client.owner,
+      repo: client.repo,
+      identity: client.identity,
+      request(method, apiPath, init) {
+        calls.push({ method, apiPath });
+        return client.request(method, apiPath, init);
+      },
+    },
   };
 }
 
-test("a test-only skip double allows the SRS plan check only for the matching project and exact ordered steps", async () => {
-  assert.equal(skipTrue, true);
-  const torText = "IS-001 keep a reviewed requirements document\n";
-  const ordered = [["tor", "Terms"], ["srs", "Requirements"]];
-  const { github, request } = await approve(ordered, "iso-route-skip");
-  const action = { ...request.actions[0], requestId: request.requestId };
-  const skipped = await assessPhase3Gate({
-    project: projectFor(torText),
+function gate(github, request, project, torText, client = github.client) {
+  return assessPhase3Gate({
+    project,
     torText,
-    routeApproval: { client: github.client, action },
+    routeApproval: {
+      client,
+      action: { ...request.actions[0], requestId: request.requestId },
+    },
   });
+}
+
+function actionWithSteps(request, steps) {
+  const action = { ...request.actions[0], requestId: request.requestId };
+  return {
+    ...action,
+    target: {
+      ...action.target,
+      steps,
+      stepsSha256: sha256Hex(jcs(stepsCanonical(steps.filter((step) => step && typeof step === "object")))),
+    },
+  };
+}
+
+const TOR_TEXT = "IS-001 keep a reviewed requirements document\n";
+
+test("happy path: approved tor-then-srs route for the gated project skips only the plan check", async () => {
+  assert.equal(skipTrue, true);
+  const { github, request } = await approve([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-skip");
+  const skipped = await gate(github, request, projectFor(TOR_TEXT), TOR_TEXT);
   assert.equal(skipped.ok, true);
   assert.equal(skipped.planCheckSkipped, true);
   assert.equal(skipped.sourcePlanCommit, null);
   assert.equal(skipped.sourcePlanSha256, null);
-  assert.equal(skipped.sha256, sha256(torText));
+  assert.equal(skipped.sha256, sha256(TOR_TEXT));
 
-  const cases = [
-    [["srs", "Requirements"]],
-    [["tor", "Terms"], ["srs", "Requirements"], ["verification", "Check"]],
-    [["srs", "Requirements"], ["tor", "Terms"]],
-  ];
-  for (const pairs of cases) {
-    const changed = routeRequest(pairs, request.requestId).actions[0];
-    const refused = await assessPhase3Gate({
-      project: projectFor(torText),
-      torText,
-      routeApproval: { client: github.client, action: { ...changed, requestId: request.requestId } },
-    });
-    assert.equal(refused.reason, "projectPlan-not-approved");
-  }
-  const other = routeRequest(ordered, request.requestId, { projectId: "b".repeat(32) }).actions[0];
-  assert.equal((await assessPhase3Gate({
-    project: projectFor(torText),
-    torText,
-    routeApproval: { client: github.client, action: { ...other, requestId: request.requestId } },
-  })).reason, "projectPlan-not-approved");
+  const longer = await approve(
+    [["tor", "Terms"], ["srs", "Requirements"], ["implementation", "Build"], ["verification", "Check"]],
+    "iso-route-longer",
+  );
+  const longerSkip = await gate(longer.github, longer.request, projectFor(TOR_TEXT), TOR_TEXT);
+  assert.equal(longerSkip.ok, true);
+  assert.equal(longerSkip.planCheckSkipped, true);
 
-  const withoutSrs = await approve([["tor", "Terms"], ["plan", "Plan"]], "iso-route-no-srs");
-  assert.equal((await assessPhase3Gate({
-    project: projectFor(torText),
-    torText,
+  const dashed = await approve([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-dashed", { projectId: DASHED });
+  const dashedSkip = await assessRouteSkip({
+    project: projectFor(TOR_TEXT, { notionPageId: DASHED }),
     routeApproval: {
-      client: withoutSrs.github.client,
-      action: { ...withoutSrs.request.actions[0], requestId: withoutSrs.request.requestId },
+      client: dashed.github.client,
+      action: { ...dashed.request.actions[0], requestId: dashed.request.requestId },
     },
-  })).reason, "projectPlan-not-approved");
+  });
+  assert.deepEqual(dashedSkip, { ok: true });
+  const dashedGate = await gate(dashed.github, dashed.request, projectFor(TOR_TEXT, { notionPageId: DASHED }), TOR_TEXT);
+  assert.equal(dashedGate.planCheckSkipped, true);
+});
 
-  assert.equal((await assessPhase3Gate({
-    project: projectFor(torText),
-    torText: "different tor\n",
-    routeApproval: { client: github.client, action },
-  })).reason, "tor-hash-mismatch");
-  assert.equal((await assessPhase3Gate({
-    project: projectFor(torText, { srs: { status: "needs-review" } }),
-    torText,
-    routeApproval: { client: github.client, action },
-  })).reason, "srs-needs-review");
-  assert.equal(formatIct(NOW).endsWith("+07:00"), true);
-  assert.equal(APPROVAL_CHANNEL_ID, "C0CLPUMNYUD");
+test("wrong project: a genuinely approved route for project A does not skip project B's plan check", async () => {
+  const { github, request } = await approve([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-wrong");
+  const counted = countingClient(github.client);
+  const project = projectFor(TOR_TEXT, { notionPageId: "b".repeat(32) });
+  const action = { ...request.actions[0], requestId: request.requestId };
+  assert.deepEqual(
+    await assessRouteSkip({ project, routeApproval: { client: counted.client, action } }),
+    { ok: false, reason: "project-mismatch" },
+  );
+  const refused = await assessPhase3Gate({
+    project,
+    torText: TOR_TEXT,
+    routeApproval: { client: counted.client, action },
+  });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, "projectPlan-not-approved");
+  assert.equal(counted.calls.length, 0);
+  const dashedProject = projectFor(TOR_TEXT, { notionPageId: DASHED });
+  const dashedCount = countingClient(github.client);
+  assert.deepEqual(
+    await assessRouteSkip({
+      project: dashedProject,
+      routeApproval: { client: dashedCount.client, action },
+    }),
+    { ok: false, reason: "project-mismatch" },
+  );
+  assert.equal(dashedCount.calls.length, 0);
+});
+
+test("missing project id: no notionPageId on the gated project fails closed", async () => {
+  const { github, request } = await approve([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-missing");
+  const action = { ...request.actions[0], requestId: request.requestId };
+  const cases = [
+    projectFor(TOR_TEXT, { notionPageId: undefined }),
+    projectFor(TOR_TEXT, { notionPageId: "" }),
+    projectFor(TOR_TEXT, { notionPageId: 12345678 }),
+    projectFor(TOR_TEXT, { notionPageId: "demo" }),
+    projectFor(TOR_TEXT, { id: PROJECT, notionPageId: undefined }),
+  ];
+  for (const project of cases) {
+    const counted = countingClient(github.client);
+    assert.equal(
+      (await assessRouteSkip({ project, routeApproval: { client: counted.client, action } })).reason,
+      "project-id-missing",
+    );
+    assert.equal((await assessPhase3Gate({
+      project,
+      torText: TOR_TEXT,
+      routeApproval: { client: counted.client, action },
+    })).reason, "projectPlan-not-approved");
+    assert.equal(counted.calls.length, 0);
+  }
+});
+
+test("tor before srs with steps between them is allowed", async () => {
+  for (const [pairs, requestId] of [
+    [[["tor", "Terms"], ["plan", "Plan"], ["srs", "Requirements"]], "iso-route-between-plan"],
+    [[["tor", "Terms"], ["implementation", "Build"], ["srs", "Requirements"]], "iso-route-between-build"],
+  ]) {
+    const approved = await approve(pairs, requestId);
+    const project = projectFor(TOR_TEXT);
+    const action = { ...approved.request.actions[0], requestId: approved.request.requestId };
+    assert.deepEqual(
+      await assessRouteSkip({ project, routeApproval: { client: approved.github.client, action } }),
+      { ok: true },
+    );
+    const skipped = await gate(approved.github, approved.request, project, TOR_TEXT);
+    assert.equal(skipped.ok, true);
+    assert.equal(skipped.planCheckSkipped, true);
+  }
+});
+
+test("srs before tor is refused", async () => {
+  for (const [pairs, requestId] of [
+    [[["srs", "Requirements"], ["tor", "Terms"]], "iso-route-srs-first"],
+    [[["srs", "Requirements"], ["plan", "Plan"], ["tor", "Terms"]], "iso-route-srs-plan-tor"],
+  ]) {
+    const approved = await approve(pairs, requestId);
+    const project = projectFor(TOR_TEXT);
+    const action = { ...approved.request.actions[0], requestId: approved.request.requestId };
+    assert.equal(
+      (await assessRouteSkip({ project, routeApproval: { client: approved.github.client, action } })).reason,
+      "tor-not-before-srs",
+    );
+    assert.equal((await gate(approved.github, approved.request, project, TOR_TEXT)).reason, "projectPlan-not-approved");
+  }
+});
+
+test("a route with no tor is refused", async () => {
+  for (const [pairs, requestId] of [
+    [[["srs", "Requirements"]], "iso-route-srs-only"],
+    [[["plan", "Plan"], ["srs", "Requirements"], ["implementation", "Build"]], "iso-route-no-tor"],
+  ]) {
+    const approved = await approve(pairs, requestId);
+    const action = { ...approved.request.actions[0], requestId: approved.request.requestId };
+    const { verifyApproval } = await import("../lib/owner-approval.mjs");
+    assert.equal((await verifyApproval({ client: approved.github.client, action })).ok, true);
+    assert.equal(
+      (await assessRouteSkip({
+        project: projectFor(TOR_TEXT),
+        routeApproval: { client: approved.github.client, action },
+      })).reason,
+      "tor-missing",
+    );
+    assert.equal((await gate(approved.github, approved.request, projectFor(TOR_TEXT), TOR_TEXT)).reason, "projectPlan-not-approved");
+  }
+});
+
+test("a route with no srs is refused", async () => {
+  for (const [pairs, requestId] of [
+    [[["tor", "Terms"], ["plan", "Plan"]], "iso-route-tor-plan"],
+    [[["tor", "Terms"]], "iso-route-tor-only"],
+  ]) {
+    const approved = await approve(pairs, requestId);
+    const action = { ...approved.request.actions[0], requestId: approved.request.requestId };
+    assert.equal(
+      (await assessRouteSkip({
+        project: projectFor(TOR_TEXT),
+        routeApproval: { client: approved.github.client, action },
+      })).reason,
+      "srs-missing",
+    );
+    assert.equal((await gate(approved.github, approved.request, projectFor(TOR_TEXT), TOR_TEXT)).reason, "projectPlan-not-approved");
+  }
+});
+
+test("unknown step id is refused by the hook itself", async () => {
+  const { github, request } = await approve([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-unknown");
+  for (const id of ["merge-deploy", "TOR", ""]) {
+    const steps = [
+      { id: "tor", title: "Terms" },
+      { id: "srs", title: "Requirements" },
+      { id, title: "Merge" },
+    ];
+    const counted = countingClient(github.client);
+    const result = await assessRouteSkip({
+      project: projectFor(TOR_TEXT),
+      routeApproval: { client: counted.client, action: actionWithSteps(request, steps) },
+    });
+    assert.equal(result.reason, "route-steps-invalid");
+    assert.equal(counted.calls.length, 0);
+  }
+});
+
+test("duplicate step id is refused by the hook itself", async () => {
+  const { github, request } = await approve([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-dup");
+  const cases = [
+    [{ id: "tor", title: "Terms" }, { id: "srs", title: "Requirements" }, { id: "tor", title: "Terms again" }],
+    "not-an-array",
+    [],
+    [{ id: "tor", title: "Terms" }, null],
+  ];
+  for (const steps of cases) {
+    const counted = countingClient(github.client);
+    const action = steps === "not-an-array"
+      ? { ...request.actions[0], requestId: request.requestId, target: { ...request.actions[0].target, steps } }
+      : actionWithSteps(request, steps);
+    assert.equal(
+      (await assessRouteSkip({
+        project: projectFor(TOR_TEXT),
+        routeApproval: { client: counted.client, action },
+      })).reason,
+      "route-steps-invalid",
+    );
+    assert.equal(counted.calls.length, 0);
+  }
+});
+
+test("verifyApproval is still required: an unfiled or tampered route does not skip", async () => {
+  const { github, request } = await approve([["tor", "Terms"], ["plan", "Plan"], ["srs", "Requirements"]], "iso-route-verified");
+  const counted = countingClient(github.client);
+  const unfiled = routeRequest([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-never");
+  assert.equal(
+    (await assessRouteSkip({
+      project: projectFor(TOR_TEXT),
+      routeApproval: {
+        client: counted.client,
+        action: { ...unfiled.actions[0], requestId: unfiled.requestId },
+      },
+    })).reason,
+    "approval-not-verified",
+  );
+  assert.ok(counted.calls.length > 0);
+  const variants = [
+    [["tor", "Terms"], ["srs", "Requirements"]],
+    [["tor", "Terms"], ["plan", "Plan"], ["srs", "Requirements"], ["verification", "Check"]],
+    [["plan", "Plan"], ["tor", "Terms"], ["srs", "Requirements"]],
+  ];
+  for (const pairs of variants) {
+    const changed = routeRequest(pairs, request.requestId);
+    const result = await assessRouteSkip({
+      project: projectFor(TOR_TEXT),
+      routeApproval: {
+        client: github.client,
+        action: { ...changed.actions[0], requestId: request.requestId },
+      },
+    });
+    assert.equal(result.reason, "approval-not-verified");
+    assert.equal((await gate(github, changed, projectFor(TOR_TEXT), TOR_TEXT)).reason, "projectPlan-not-approved");
+  }
+});
+
+test("TOR-hash mismatch and srs-needs-review still refuse even with a valid skip", async () => {
+  const { github, request } = await approve([["tor", "Terms"], ["srs", "Requirements"]], "iso-route-other-gates");
+  assert.equal((await gate(github, request, projectFor(TOR_TEXT), "different tor\n")).reason, "tor-hash-mismatch");
+  assert.equal((await gate(
+    github,
+    request,
+    projectFor(TOR_TEXT, { srs: { status: "needs-review" } }),
+    TOR_TEXT,
+  )).reason, "srs-needs-review");
 });

@@ -19,6 +19,8 @@ export function formatIct(input: Date | number | string): string;
 export function approvalRouteMode(env?: NodeJS.ProcessEnv): { ok: true } | { ok: false; reason: string };
 export function authenticatedAppBotLogin(identity: { kind?: string; botLogin?: string } | null | undefined): string | null;
 export function assertAppIdentity(identity: { kind?: string; botLogin?: string } | null | undefined): { ok: true } | { ok: false; reason: string };
+export const ROUTE_STEP_IDS: readonly ["tor", "plan", "srs", "implementation", "verification"];
+export function isNotionPageId(value: unknown): boolean;
 export function stepsCanonical(steps: readonly { id: string; title: string }[]): Array<{ id: string; title: string }>;
 export function routeApprovalTitle(project: { title: string }): string;
 export function routeApprovalStatement(target: {

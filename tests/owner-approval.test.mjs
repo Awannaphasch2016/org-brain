@@ -1797,7 +1797,8 @@ test("route-approval cards post on both surfaces with Approve, Reject, and Refre
   assert.deepEqual(pending.requester, { agentId: "spec-writer", identityPath: "agent:spec-writer" });
 });
 
-test("route-approval button values stay under 1900 characters for a 32-step list", () => {
+// A 32-step card cannot be filed: step ids must be unique and the closed list has 5 ids.
+test("route-approval card buttons stay under 1900 characters for a 32-element list (render-only; validateRequest caps a route at 5 unique ids)", () => {
   const ids = ["tor", "plan", "srs", "implementation", "verification"];
   const pairs = Array.from({ length: 32 }, (_, index) => [ids[index % ids.length], `Step ${index + 1}`]);
   const steps = routeSteps(pairs);
@@ -1966,6 +1967,8 @@ test("SRS is refused without an approved plan even when a route-approval is appr
   const torText = "IS-001 keep a reviewed requirements document\n";
   const gate = await assessPhase3Gate({
     project: {
+      id: "a".repeat(32),
+      notionPageId: "a".repeat(32),
       tor: {
         status: "approved",
         path: "docs/tor.md",
@@ -1982,4 +1985,27 @@ test("SRS is refused without an approved plan even when a route-approval is appr
   });
   assert.equal(gate.ok, false);
   assert.equal(gate.reason, "projectPlan-not-approved");
+});
+
+test("requester is recorded only for route-approval requests", async () => {
+  const github = approvalGithub();
+  const slack = slackDouble();
+  const request = validateRequest(requestDocument(mergeAction(), "iso-req-requester"));
+  storeText(github, REQUESTS_BRANCH, `approvals/requests/${request.requestId}.json`, `${JSON.stringify(request)}\n`);
+  const filed = await fileApprovalRequest({
+    requestId: request.requestId,
+    threadChannel: THREAD,
+    threadTs: THREAD_PARENT,
+    client: github.client,
+    slack,
+    env: ENV,
+    now: NOW,
+    requester: { agentId: "spec-writer", identityPath: "agent:spec-writer" },
+  });
+  assert.equal(filed.status, "filed", filed.reason);
+  const pending = JSON.parse(github.state.files.get(`${RECORDS_BRANCH}:approvals/pending/${request.requestId}.json`));
+  assert.equal(pending.requester, undefined);
+  const posts = slack.calls.filter((call) => call.method === "chat.postMessage");
+  const text = posts.map((call) => call.body.blocks?.map((block) => block.text?.text ?? "").join("\n") ?? call.body.text).join("\n");
+  assert.equal(text.includes("Requested by"), false);
 });

@@ -31,6 +31,21 @@ export function assessPhase3Gate(input: {
   planCheckSkipped?: boolean;
 }>;
 
+export function assessRouteSkip(input: {
+  project?: Record<string, any> | null;
+  routeApproval?: {
+    client?: { request?: (...args: any[]) => Promise<any> };
+    action?: {
+      requestId?: string;
+      key?: string;
+      kind?: string;
+      title?: string;
+      statement?: string;
+      target?: unknown;
+    };
+  };
+}): Promise<{ ok: true } | { ok: false; reason: string }>;
+
 export function assessSrsGate(input: {
   project: Record<string, any> | null | undefined;
   torText?: string;
